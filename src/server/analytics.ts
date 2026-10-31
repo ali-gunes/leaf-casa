@@ -4,7 +4,7 @@ import crypto from 'node:crypto';
 import { createRequire } from 'node:module';
 import type { IncomingMessage } from 'node:http';
 import { DatabaseSync } from 'node:sqlite';
-import type { DeviceKind } from './sessionStore.ts';
+import type { BookFormat, DeviceKind } from './sessionStore.ts';
 
 const esmRequire = createRequire(import.meta.url);
 let geoipModule: { lookup: (ip: string) => { country?: string } | null } | null | undefined;
@@ -254,7 +254,7 @@ export class AnalyticsStore {
     receiverIp: string;
     receiverCountry: string;
     deviceType: string;
-    format: '.kepub.epub' | '.epub' | '.pdf' | 'article';
+    format: BookFormat;
     sizeBytes: number;
   }): number | undefined {
     try {

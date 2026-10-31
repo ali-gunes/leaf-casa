@@ -13,6 +13,8 @@ import {
 } from '../src/server/sessionStore.ts';
 import { inspectAndConvertEpub } from '../src/client/sender/kepubify.ts';
 import { fetchAndBuildArticleEpub, validatePublicUrl } from '../src/server/articleToEpub.ts';
+import { lookupGeoCountry } from '../src/server/analytics.ts';
+import { convertEpubBufferToMobi } from '../src/server/epubToMobi.ts';
 import { createLeafServer } from '../src/server/index.ts';
 
 test('Crockford Base32 key generator excludes ambiguous characters', () => {
@@ -321,6 +323,54 @@ test('End-to-end HTTP relay, queue download tracking, and SQLite /stats auth', a
     assert.throws(() => validatePublicUrl('http://portainer:9000/'), /Private or local/);
     assert.throws(() => validatePublicUrl('http://172.18.0.5:3000/'), /Private or local/);
     assert.throws(() => validatePublicUrl('https://user:pass@example.com/article'), /embedded credentials/);
+
+    // 12. GeoIP lookup resolves public IPs properly via createRequire
+    assert.equal(lookupGeoCountry('176.234.114.13'), 'TR');
+    assert.equal(lookupGeoCountry('152.228.236.215'), 'FR');
+    assert.equal(lookupGeoCountry('127.0.0.1'), 'LOCAL');
+
+    // 13. Kindle session auto-converts EPUB -> MOBI and blocks unsupported PDF downloads
+    const kindleGen = await request('/api/generate', {
+      method: 'POST',
+      headers: {
+        'User-Agent':
+          'Mozilla/5.0 (X11; U; Linux armv7l like Android; en-us) AppleWebKit/531.2+ (KHTML, like Gecko) Version/5.0 Safari/533.2+ Kindle/3.0+',
+      },
+    });
+    assert.equal(kindleGen.status, 200);
+    const kindleKey = kindleGen.json().key;
+
+    const kindlePdfRes = await request(`/api/upload/${kindleKey}`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/octet-stream',
+        'X-File-Name': 'paper.pdf',
+        'X-Book-Format': '.pdf',
+      },
+      body: validPdfBytes,
+    });
+    assert.equal(kindlePdfRes.status, 415);
+    assert.equal(kindlePdfRes.json().error.includes('Kindle'), true);
+
+    const kindleEpubRes = await request(`/api/upload/${kindleKey}`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/octet-stream',
+        'X-File-Name': 'Dune.epub',
+        'X-Book-Format': '.epub',
+      },
+      body: validEpubBytes,
+    });
+    assert.equal(kindleEpubRes.status, 200);
+    const kindleQueued = kindleEpubRes.json().file;
+    assert.equal(kindleQueued.filename, 'Dune.mobi');
+    assert.equal(kindleQueued.format, '.mobi');
+
+    const kindleDl = await request(`/api/download/${kindleKey}/${kindleQueued.id}/Dune.mobi`);
+    assert.equal(kindleDl.status, 200);
+    assert.equal(kindleDl.headers['content-type'], 'application/x-mobipocket-ebook');
+    assert.equal(kindleDl.headers['content-disposition'], 'attachment; filename="Dune.mobi"');
+    assert.equal(kindleDl.body.subarray(60, 68).toString('ascii'), 'BOOKMOBI');
   } finally {
     server.close();
     analytics.close();

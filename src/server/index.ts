@@ -10,10 +10,12 @@ import {
   normalizeKey,
   sanitizeFilename,
   validateBookBuffer,
+  type BookFormat,
   type Session,
 } from './sessionStore.ts';
 import { AnalyticsStore, extractClientAddress, countryToFlag } from './analytics.ts';
 import { fetchAndBuildArticleEpub } from './articleToEpub.ts';
+import { convertEpubBufferToMobi } from './epubToMobi.ts';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -295,14 +297,23 @@ export function createLeafServer(customConfig?: Partial<AppConfig>) {
         }
 
         const rawName = safeDecodeURIComponent(String(req.headers['x-file-name'] || 'book.epub'));
-        const filename = sanitizeFilename(rawName);
-        const rawFormat = String(req.headers['x-book-format'] || '');
-        const format: '.kepub.epub' | '.epub' | '.pdf' =
-          rawFormat === '.kepub.epub' || filename.toLowerCase().endsWith('.kepub.epub')
+        let filename = sanitizeFilename(rawName);
+        const lowerName = filename.toLowerCase();
+        const rawFormat = String(req.headers['x-book-format'] || '').toLowerCase();
+        let format: Exclude<BookFormat, 'article'> =
+          rawFormat === '.kepub.epub' || lowerName.endsWith('.kepub.epub')
             ? '.kepub.epub'
-            : rawFormat === '.pdf' || filename.toLowerCase().endsWith('.pdf')
+            : rawFormat === '.pdf' || lowerName.endsWith('.pdf')
               ? '.pdf'
-              : '.epub';
+              : rawFormat === '.mobi' || lowerName.endsWith('.mobi')
+                ? '.mobi'
+                : rawFormat === '.azw' || lowerName.endsWith('.azw')
+                  ? '.azw'
+                  : rawFormat === '.prc' || lowerName.endsWith('.prc')
+                    ? '.prc'
+                    : rawFormat === '.txt' || lowerName.endsWith('.txt')
+                      ? '.txt'
+                      : '.epub';
 
         // Inspect real binary magic bytes and EPUB structure to block disguised files (e.g., renamed .mp4/.exe)
         const validation = validateBookBuffer(fileBuffer, format);
@@ -310,14 +321,42 @@ export function createLeafServer(customConfig?: Partial<AppConfig>) {
           return sendJson(res, 415, { error: validation.reason || 'Unsupported or corrupted file format.' });
         }
 
-        const title = req.headers['x-book-title']
+        let finalBuffer = fileBuffer;
+        let title = req.headers['x-book-title']
           ? safeDecodeURIComponent(String(req.headers['x-book-title'])).slice(0, 200)
           : undefined;
-        const author = req.headers['x-book-author']
+        let author = req.headers['x-book-author']
           ? safeDecodeURIComponent(String(req.headers['x-book-author'])).slice(0, 200)
           : undefined;
 
-        const mimeType = format === '.pdf' ? 'application/pdf' : 'application/epub+zip';
+        // Kindle Experimental Web Browser only allows .AZW, .PRC, .MOBI, or .TXT downloads
+        if (session.device.kind === 'kindle') {
+          if (format === '.pdf') {
+            return sendJson(res, 415, {
+              error:
+                "Kindle's Experimental Web Browser blocks .PDF downloads (Amazon only allows .MOBI, .AZW, .PRC, or .TXT in the built-in browser). Please upload an .EPUB, .MOBI, or .TXT file instead.",
+            });
+          }
+          if (format === '.epub' || format === '.kepub.epub') {
+            const mobi = convertEpubBufferToMobi(fileBuffer, filename);
+            finalBuffer = mobi.buffer;
+            filename = sanitizeFilename(mobi.filename);
+            format = '.mobi';
+            title = title || mobi.title;
+            author = author || mobi.author;
+          }
+        }
+
+        const mimeType =
+          format === '.pdf'
+            ? 'application/pdf'
+            : format === '.mobi' || format === '.prc'
+              ? 'application/x-mobipocket-ebook'
+              : format === '.azw'
+                ? 'application/vnd.amazon.ebook'
+                : format === '.txt'
+                  ? 'text/plain; charset=utf-8'
+                  : 'application/epub+zip';
 
         const transferId = analytics.logTransfer({
           sessionKey: session.key,
@@ -327,7 +366,7 @@ export function createLeafServer(customConfig?: Partial<AppConfig>) {
           receiverCountry: session.receiverCountry,
           deviceType: session.device.kind,
           format,
-          sizeBytes: fileBuffer.byteLength,
+          sizeBytes: finalBuffer.byteLength,
         });
 
         const queued = sessions.addFile(session.key, {
@@ -336,7 +375,7 @@ export function createLeafServer(customConfig?: Partial<AppConfig>) {
           author,
           mimeType,
           format,
-          buffer: fileBuffer,
+          buffer: finalBuffer,
           transferId,
         });
 
@@ -367,13 +406,29 @@ export function createLeafServer(customConfig?: Partial<AppConfig>) {
         const bodyBuf = await readBodyBuffer(req, 64 * 1024);
         const body = JSON.parse(bodyBuf.toString('utf8') || '{}');
         const articleUrl = String(body.url || '').trim();
-        const asKepub = body.asKepub !== undefined ? Boolean(body.asKepub) : session.device.prefersKepub;
+        const isKindleSession = session.device.kind === 'kindle';
+        const asKepub = isKindleSession
+          ? false
+          : body.asKepub !== undefined
+            ? Boolean(body.asKepub)
+            : session.device.prefersKepub;
 
         if (!articleUrl) {
           return sendJson(res, 400, { error: 'Article URL is required' });
         }
 
         const built = await fetchAndBuildArticleEpub(articleUrl, { asKepub });
+        let articleBuffer = built.buffer;
+        let articleFilename = built.filename;
+        let articleMime = 'application/epub+zip';
+
+        if (isKindleSession) {
+          const mobi = convertEpubBufferToMobi(built.buffer, built.filename);
+          articleBuffer = mobi.buffer;
+          articleFilename = sanitizeFilename(mobi.filename);
+          articleMime = 'application/x-mobipocket-ebook';
+        }
+
         const transferId = analytics.logTransfer({
           sessionKey: session.key,
           senderIp: senderAddr.storedIp,
@@ -382,16 +437,16 @@ export function createLeafServer(customConfig?: Partial<AppConfig>) {
           receiverCountry: session.receiverCountry,
           deviceType: session.device.kind,
           format: 'article',
-          sizeBytes: built.buffer.byteLength,
+          sizeBytes: articleBuffer.byteLength,
         });
 
         const queued = sessions.addFile(session.key, {
-          filename: built.filename,
+          filename: articleFilename,
           title: built.title,
           author: built.author,
-          mimeType: 'application/epub+zip',
+          mimeType: articleMime,
           format: 'article',
-          buffer: built.buffer,
+          buffer: articleBuffer,
           transferId,
         });
 
@@ -426,11 +481,19 @@ export function createLeafServer(customConfig?: Partial<AppConfig>) {
 
         const asciiFallback = file.filename.replace(/[^\x20-\x7E]/g, '_').replace(/"/g, '');
         const encodedFilename = encodeURIComponent(file.filename);
+        const session = sessions.getSession(key, false);
+        const reqDevice = detectDevice(req.headers['user-agent']);
+        const isKindleClient = session?.device.kind === 'kindle' || reqDevice.kind === 'kindle';
+
+        // Kindle Experimental Web Browser requires simple Content-Disposition without RFC 5987 filename*=
+        const contentDisposition = isKindleClient
+          ? `attachment; filename="${asciiFallback}"`
+          : `attachment; filename="${asciiFallback}"; filename*=UTF-8''${encodedFilename}`;
 
         res.writeHead(200, {
           'Content-Type': file.mimeType,
           'Content-Length': String(file.buffer.byteLength),
-          'Content-Disposition': `attachment; filename="${asciiFallback}"; filename*=UTF-8''${encodedFilename}`,
+          'Content-Disposition': contentDisposition,
           'Cache-Control': 'no-store',
         });
         res.end(file.buffer);
@@ -751,9 +814,9 @@ function renderSenderPage(config: AppConfig, prefillKey: string): string {
             type="file"
             id="file-input"
             class="dropzone-input"
-            accept=".epub,.pdf,application/epub+zip,application/pdf"
+            accept=".epub,.pdf,.mobi,.azw,.prc,.txt,application/epub+zip,application/pdf,application/x-mobipocket-ebook,text/plain"
             multiple
-            aria-label="Choose EPUB or PDF files"
+            aria-label="Choose EPUB, PDF, MOBI, or TXT files"
           >
           <div class="dropzone-icon" aria-hidden="true">✦</div>
           <div class="dropzone-title">Drop EPUB or PDF files anywhere</div>

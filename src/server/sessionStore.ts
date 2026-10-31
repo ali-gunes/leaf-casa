@@ -23,13 +23,23 @@ export interface DeviceInfo {
   prefersKepub: boolean;
 }
 
+export type BookFormat =
+  | '.kepub.epub'
+  | '.epub'
+  | '.mobi'
+  | '.azw'
+  | '.prc'
+  | '.txt'
+  | '.pdf'
+  | 'article';
+
 export interface QueuedFile {
   id: string;
   filename: string;
   title?: string;
   author?: string;
   mimeType: string;
-  format: '.kepub.epub' | '.epub' | '.pdf' | 'article';
+  format: BookFormat;
   size: number;
   buffer: Buffer;
   uploadedAt: number;
@@ -43,7 +53,7 @@ export interface PublicFileMetadata {
   filename: string;
   title?: string;
   author?: string;
-  format: '.kepub.epub' | '.epub' | '.pdf' | 'article';
+  format: BookFormat;
   size: number;
   uploadedAt: number;
   downloaded: boolean;
@@ -280,7 +290,7 @@ export class SessionStore {
       title?: string;
       author?: string;
       mimeType: string;
-      format: '.kepub.epub' | '.epub' | '.pdf' | 'article';
+      format: BookFormat;
       buffer: Buffer;
       transferId?: number;
     }
@@ -465,10 +475,45 @@ export function sanitizeFilename(name: string): string {
  */
 export function validateBookBuffer(
   buffer: Buffer,
-  expectedFormat: '.kepub.epub' | '.epub' | '.pdf'
+  expectedFormat: Exclude<BookFormat, 'article'>
 ): { valid: boolean; reason?: string } {
+  if (buffer.byteLength === 0) {
+    return { valid: false, reason: 'File is empty (0 bytes).' };
+  }
+
+  if (expectedFormat === '.txt') {
+    // Plain text must not contain binary null bytes in the initial window
+    const sample = buffer.subarray(0, Math.min(4096, buffer.byteLength));
+    for (let i = 0; i < sample.byteLength; i++) {
+      if (sample[i] === 0x00) {
+        return {
+          valid: false,
+          reason: 'Invalid TXT file: binary content detected (file may be renamed).',
+        };
+      }
+    }
+    return { valid: true };
+  }
+
   if (buffer.byteLength < 8) {
     return { valid: false, reason: 'File is too small to be a valid eBook or PDF.' };
+  }
+
+  if (expectedFormat === '.mobi' || expectedFormat === '.azw' || expectedFormat === '.prc') {
+    if (buffer.byteLength < 78) {
+      return {
+        valid: false,
+        reason: `Invalid ${expectedFormat.toUpperCase()} file: missing PalmDB header.`,
+      };
+    }
+    const pdbTypeCreator = buffer.subarray(60, 68).toString('ascii');
+    if (pdbTypeCreator !== 'BOOKMOBI' && pdbTypeCreator !== 'TEXtREAd') {
+      return {
+        valid: false,
+        reason: `Invalid ${expectedFormat.toUpperCase()} file: missing BOOKMOBI header (file may be renamed or corrupted).`,
+      };
+    }
+    return { valid: true };
   }
 
   if (expectedFormat === '.pdf') {

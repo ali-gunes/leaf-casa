@@ -76,7 +76,13 @@
       if (undownloaded.length > 0) {
         var nextItem = undownloaded[0];
         var currentIndex = downloadedList.length + 1;
-        var downloadUrl = '/api/download/' + encodeURIComponent(currentKey) + '/' + encodeURIComponent(nextItem.id);
+        var downloadUrl =
+          '/api/download/' +
+          encodeURIComponent(currentKey) +
+          '/' +
+          encodeURIComponent(nextItem.id) +
+          '/' +
+          encodeURIComponent(nextItem.filename);
         nextWrapEl.innerHTML =
           '<a class="eink-primary-btn" id="eink-primary-download" href="' + downloadUrl + '">' +
           '&#11015; Download Next: &ldquo;' + escapeHtml(nextItem.filename) + '&rdquo; (' + currentIndex + ' of ' + total + ')' +
@@ -109,7 +115,13 @@
 
     for (i = 0; i < ordered.length; i++) {
       var item = ordered[i];
-      var itemUrl = '/api/download/' + encodeURIComponent(currentKey) + '/' + encodeURIComponent(item.id);
+      var itemUrl =
+        '/api/download/' +
+        encodeURIComponent(currentKey) +
+        '/' +
+        encodeURIComponent(item.id) +
+        '/' +
+        encodeURIComponent(item.filename);
       var badgeHtml = item.downloaded
         ? '<span class="eink-badge-done">[&#10003; Downloaded]</span>'
         : '';

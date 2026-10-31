@@ -47,6 +47,7 @@ interface RemoteSessionStatus {
   const queueList = document.getElementById('sender-queue-list');
 
   let connectedKey: string | null = null;
+  let connectedDeviceKind: string | null = null;
   let userTouchedKepubToggle = false;
   let activeEventSource: EventSource | null = null;
   const queue: LocalQueueItem[] = [];
@@ -89,6 +90,7 @@ interface RemoteSessionStatus {
 
   function setDisconnectedState(errorMsg?: string): void {
     connectedKey = null;
+    connectedDeviceKind = null;
     if (activeEventSource) {
       activeEventSource.close();
       activeEventSource = null;
@@ -126,6 +128,7 @@ interface RemoteSessionStatus {
 
       const data = (await res.json()) as RemoteSessionStatus;
       connectedKey = data.key;
+      connectedDeviceKind = data.device?.kind || null;
       slots.forEach((s) => s.classList.add('is-connected'));
 
       if (kepubCheckbox && !userTouchedKepubToggle) {
@@ -149,6 +152,11 @@ interface RemoteSessionStatus {
     connectionBar.classList.add('is-connected');
 
     const deviceLabel = data.device?.label || 'E-Reader';
+    if (data.device?.kind === 'kindle') {
+      connectionText.textContent = `Connected to ${deviceLabel} (EPUB → MOBI auto-enabled)`;
+      return;
+    }
+
     const kepubActive = kepubCheckbox ? kepubCheckbox.checked : Boolean(data.device?.prefersKepub);
     const suffix = kepubActive ? ' (KePub auto-enabled)' : '';
     connectionText.textContent = `Connected to ${deviceLabel}${suffix}`;
@@ -272,7 +280,15 @@ interface RemoteSessionStatus {
 
     for (const file of files) {
       const lower = file.name.toLowerCase();
-      if (!lower.endsWith('.epub') && !lower.endsWith('.pdf')) {
+      const isSupported =
+        lower.endsWith('.epub') ||
+        lower.endsWith('.pdf') ||
+        lower.endsWith('.mobi') ||
+        lower.endsWith('.azw') ||
+        lower.endsWith('.prc') ||
+        lower.endsWith('.txt');
+
+      if (!isSupported) {
         queue.unshift({
           localId: crypto.randomUUID(),
           kind: 'file',
@@ -280,7 +296,22 @@ interface RemoteSessionStatus {
           sizeBytes: file.size,
           formatLabel: 'Unsupported',
           status: 'error',
-          errorMessage: 'Only .epub and .pdf files are supported',
+          errorMessage: 'Supported formats: .epub, .pdf, .mobi, .azw, .prc, .txt',
+        });
+        added++;
+        continue;
+      }
+
+      if (connectedDeviceKind === 'kindle' && lower.endsWith('.pdf')) {
+        queue.unshift({
+          localId: crypto.randomUUID(),
+          kind: 'file',
+          displayName: file.name,
+          sizeBytes: file.size,
+          formatLabel: 'Kindle Restriction',
+          status: 'error',
+          errorMessage:
+            "Kindle's built-in browser blocks .PDF downloads (only .MOBI, .AZW, .PRC, or .TXT are allowed). Upload an .EPUB, .MOBI, or .TXT instead.",
         });
         added++;
         continue;
@@ -314,14 +345,25 @@ interface RemoteSessionStatus {
         continue;
       }
 
-      const isPdf = lower.endsWith('.pdf');
+      const formatLabel = lower.endsWith('.pdf')
+        ? 'PDF'
+        : lower.endsWith('.mobi')
+          ? 'MOBI'
+          : lower.endsWith('.azw')
+            ? 'AZW'
+            : lower.endsWith('.prc')
+              ? 'PRC'
+              : lower.endsWith('.txt')
+                ? 'TXT'
+                : 'EPUB';
+
       queue.unshift({
         localId: crypto.randomUUID(),
         kind: 'file',
         file,
         displayName: file.name,
         sizeBytes: file.size,
-        formatLabel: isPdf ? 'PDF' : 'EPUB',
+        formatLabel,
         status: 'waiting',
       });
       added++;
@@ -375,13 +417,30 @@ interface RemoteSessionStatus {
     const file = item.file!;
     const lower = file.name.toLowerCase();
     const isEpub = lower.endsWith('.epub');
-    const shouldKepubify = isEpub && Boolean(kepubCheckbox?.checked) && !lower.endsWith('.kepub.epub');
+    const isKindle = connectedDeviceKind === 'kindle';
+    const shouldKepubify = !isKindle && isEpub && Boolean(kepubCheckbox?.checked) && !lower.endsWith('.kepub.epub');
 
     try {
+      if (isKindle && lower.endsWith('.pdf')) {
+        throw new Error(
+          "Kindle's built-in browser blocks .PDF downloads (only .MOBI, .AZW, .PRC, or .TXT are allowed). Upload an .EPUB, .MOBI, or .TXT instead."
+        );
+      }
+
       const t0 = performance.now();
       let payloadBytes: Uint8Array;
       let uploadFilename = file.name;
-      let format: '.kepub.epub' | '.epub' | '.pdf' = isEpub ? '.epub' : '.pdf';
+      let format = isEpub
+        ? '.epub'
+        : lower.endsWith('.pdf')
+          ? '.pdf'
+          : lower.endsWith('.mobi')
+            ? '.mobi'
+            : lower.endsWith('.azw')
+              ? '.azw'
+              : lower.endsWith('.prc')
+                ? '.prc'
+                : '.txt';
       let title: string | undefined;
       let author: string | undefined;
 
@@ -400,8 +459,8 @@ interface RemoteSessionStatus {
         author = processed.author;
         item.displayName = uploadFilename;
         item.sizeBytes = payloadBytes.byteLength;
-        item.formatLabel = format === '.kepub.epub' ? 'KePub' : 'EPUB';
-      } else {
+        item.formatLabel = isKindle ? 'MOBI (Kindle)' : format === '.kepub.epub' ? 'KePub' : 'EPUB';
+      } else if (format === '.pdf') {
         // Verify %PDF- signature on the first 1024 bytes before reading entire file into RAM
         const headSlice = new Uint8Array(await file.slice(0, 1024).arrayBuffer());
         const headText = new TextDecoder('latin1').decode(headSlice);
@@ -409,8 +468,9 @@ interface RemoteSessionStatus {
           throw new Error('Invalid PDF file (missing %PDF signature; file may be renamed)');
         }
         payloadBytes = new Uint8Array(await file.arrayBuffer());
-        format = '.pdf';
         item.formatLabel = 'PDF';
+      } else {
+        payloadBytes = new Uint8Array(await file.arrayBuffer());
       }
 
       item.status = 'uploading';
@@ -435,6 +495,15 @@ interface RemoteSessionStatus {
 
       const data = await res.json();
       item.remoteId = data.file?.id;
+      if (data.file?.filename) {
+        item.displayName = data.file.filename;
+      }
+      if (typeof data.file?.size === 'number') {
+        item.sizeBytes = data.file.size;
+      }
+      if (data.file?.format === '.mobi' && isKindle) {
+        item.formatLabel = 'MOBI (Kindle)';
+      }
       item.elapsedMs = Math.round(performance.now() - t0);
       item.status = 'sent';
       renderQueue();
@@ -451,7 +520,8 @@ interface RemoteSessionStatus {
       item.status = 'converting';
       renderQueue();
 
-      const asKepub = Boolean(kepubCheckbox?.checked);
+      const isKindle = connectedDeviceKind === 'kindle';
+      const asKepub = !isKindle && Boolean(kepubCheckbox?.checked);
       const res = await fetch(`/api/article/${encodeURIComponent(key)}`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
@@ -470,7 +540,7 @@ interface RemoteSessionStatus {
       item.remoteId = data.file?.id;
       item.displayName = data.file?.filename || item.displayName;
       item.sizeBytes = data.file?.size;
-      item.formatLabel = asKepub ? 'Article KePub' : 'Article EPUB';
+      item.formatLabel = isKindle ? 'Article MOBI' : asKepub ? 'Article KePub' : 'Article EPUB';
       item.elapsedMs = Math.round(performance.now() - t0);
       item.status = 'sent';
       renderQueue();
