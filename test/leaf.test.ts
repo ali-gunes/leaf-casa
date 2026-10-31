@@ -86,7 +86,7 @@ test('Article to EPUB builder extracts readable text and rejects private SSRF UR
 
   const sampleArticleHtml = `<!DOCTYPE html>
     <html>
-      <head><title>Why E-Ink Screens Matter — Essay</title></head>
+      <head><title>Why E-Ink Screens Matter - Essay</title></head>
       <body>
         <article>
           <h1>Why E-Ink Screens Matter</h1>
@@ -192,6 +192,15 @@ test('End-to-end HTTP relay, queue download tracking, and SQLite /stats auth', a
     assert.equal(ereaderHome.status, 200);
     const ereaderHtml = ereaderHome.text();
     assert.equal(ereaderHtml.includes('Pure 1-Bit E-Ink Mode'), true);
+    assert.equal(ereaderHtml.includes('https://github.com/ali-gunes/leaf-casa'), true);
+
+    // 1b. Desktop visits / and receives Sender page + favicon/logo assets
+    const senderHome = await request('/');
+    assert.equal(senderHome.status, 200);
+    assert.equal(senderHome.text().includes('https://github.com/ali-gunes/leaf-casa'), true);
+    const favRes = await request('/favicon.png');
+    assert.equal(favRes.status, 200);
+    assert.equal(favRes.headers['content-type'], 'image/png');
 
     // 2. Generate pairing code via API
     const genRes = await request('/api/generate', {

@@ -19,6 +19,7 @@ const __dirname = path.dirname(__filename);
 export interface AppConfig {
   appName: string;
   baseUrl: string;
+  githubUrl: string;
   port: number;
   host: string;
   maxFileSizeMb: number;
@@ -29,8 +30,9 @@ export interface AppConfig {
 
 export function loadConfig(overrides?: Partial<AppConfig>): AppConfig {
   return {
-    appName: process.env.PUBLIC_APP_NAME || 'Leaf',
+    appName: process.env.PUBLIC_APP_NAME || 'Leaf Casa',
     baseUrl: (process.env.PUBLIC_BASE_URL || 'https://leaf.casa').replace(/\/+$/, ''),
+    githubUrl: process.env.PUBLIC_GITHUB_URL || 'https://github.com/ali-gunes/leaf-casa',
     port: Number(process.env.PORT || 3000),
     host: process.env.HOST || '0.0.0.0',
     maxFileSizeMb: Number(process.env.MAX_FILE_SIZE_MB || 100),
@@ -137,6 +139,12 @@ export function createLeafServer(customConfig?: Partial<AppConfig>) {
       }
       if (method === 'GET' && pathname === '/assets/sender.js') {
         return serveStaticFile(res, resolveAssetPath('dist/client/sender.js'), 'application/javascript; charset=utf-8');
+      }
+      if (method === 'GET' && pathname === '/assets/logo.png') {
+        return serveStaticFile(res, resolveAssetPath('src/client/assets/logo.png'), 'image/png');
+      }
+      if (method === 'GET' && (pathname === '/favicon.png' || pathname === '/favicon.ico')) {
+        return serveStaticFile(res, resolveAssetPath('src/client/assets/favicon.png'), 'image/png');
       }
 
       // API: Generate or refresh session key
@@ -520,7 +528,8 @@ function renderReceiverPage(config: AppConfig, session: Session, qrSvg: string):
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>${escapeHtml(config.appName)} — E-Reader Receiver (${escapeHtml(domain)})</title>
+  <title>${escapeHtml(config.appName)} - E-Reader Receiver (${escapeHtml(domain)})</title>
+  <link rel="icon" type="image/png" href="/favicon.png">
   <link rel="stylesheet" href="/assets/eink.css">
 </head>
 <body>
@@ -566,7 +575,7 @@ function renderReceiverPage(config: AppConfig, session: Session, qrSvg: string):
   </main>
 
   <footer class="eink-footer">
-    Pure 1-Bit E-Ink Mode &middot; Files are held only in memory and cleared automatically after 15 minutes.
+    Pure 1-Bit E-Ink Mode &middot; Files are held only in memory and cleared automatically after 15 minutes &middot; <a href="${escapeHtml(config.githubUrl)}" target="_blank" rel="noopener noreferrer">GitHub Source</a>
   </footer>
 
   <script>
@@ -585,7 +594,9 @@ function renderSenderPage(config: AppConfig, prefillKey: string): string {
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>${escapeHtml(config.appName)} (${escapeHtml(domain)}) — Send Books &amp; Articles to Your E-Reader</title>
+  <title>${escapeHtml(config.appName)} (${escapeHtml(domain)}) - Send Books &amp; Articles to Your E-Reader</title>
+  <link rel="icon" type="image/png" href="/favicon.png">
+  <link rel="apple-touch-icon" href="/assets/logo.png">
   <link rel="stylesheet" href="/assets/editorial.css">
 </head>
 <body>
@@ -599,9 +610,9 @@ function renderSenderPage(config: AppConfig, prefillKey: string): string {
   <div class="editorial-shell">
     <header class="topbar">
       <a href="/" class="brand-lockup">
-        <span class="brand-mark" aria-hidden="true">L</span>
+        <img src="/assets/logo.png" alt="" class="brand-logo-img" width="30" height="30">
         <span class="brand-name">${escapeHtml(config.appName)}</span>
-        <span class="brand-domain">${escapeHtml(domain)}</span>
+        
       </a>
       <a href="/?view=ereader" class="role-switcher" title="Switch to high-contrast 1-bit E-Reader Receiver Mode">
         <span>E-Reader Mode</span>
@@ -662,23 +673,29 @@ function renderSenderPage(config: AppConfig, prefillKey: string): string {
           <div class="dropzone-icon" aria-hidden="true">✦</div>
           <div class="dropzone-title">Drop EPUB or PDF files anywhere</div>
           <p class="dropzone-hint">
-            Or click to browse · Drop first or type code first — files transmit automatically
+            Or click to browse · Drop first or type code first, files transmit automatically
           </p>
         </div>
 
-        <form class="article-form" id="article-form">
-          <label for="article-url-input" class="visually-hidden">Web article URL</label>
-          <input
-            type="url"
-            id="article-url-input"
-            class="article-input"
-            placeholder="Paste an article URL (https://...) to package as a clean eBook"
-            autocomplete="off"
-          >
-          <button type="submit" id="article-submit-btn" class="btn-leaf">
-            Send Article
-          </button>
-        </form>
+        <div class="article-block">
+          <div class="article-header">
+            <span class="article-title">Or send a web article</span>
+            <span class="article-desc">Strips ads &amp; clutter from any link and delivers a clean eBook to your reader.</span>
+          </div>
+          <form class="article-form" id="article-form">
+            <label for="article-url-input" class="visually-hidden">Web article URL</label>
+            <input
+              type="url"
+              id="article-url-input"
+              class="article-input"
+              placeholder="https://example.com/essay-or-news-article"
+              autocomplete="off"
+            >
+            <button type="submit" id="article-submit-btn" class="btn-leaf">
+              Send as eBook
+            </button>
+          </form>
+        </div>
       </section>
 
       <section class="card-panel" id="sender-queue-section" style="display: none;" aria-labelledby="queue-heading">
@@ -691,8 +708,13 @@ function renderSenderPage(config: AppConfig, prefillKey: string): string {
 
     <footer class="editorial-footer">
       <p>
-        Zero accounts · In-browser KePub conversion · Ephemeral 15-minute memory relay
+        Open Source &middot; Zero accounts &middot; In-browser KePub conversion &middot; Ephemeral 15-minute memory relay
       </p>
+      <div class="editorial-footer-links">
+        <a href="${escapeHtml(config.githubUrl)}" target="_blank" rel="noopener noreferrer">Source</a>
+        <span aria-hidden="true">&middot;</span>
+        <a href="/?view=ereader">E-Reader Receiver View</a>
+      </div>
     </footer>
   </div>
 
@@ -713,25 +735,50 @@ function renderStatsDashboard(
   const mbRelayed = (stats.totals.bytesRelayed / (1024 * 1024)).toFixed(2);
   const activeMemMb = (active.memoryUsedBytes / (1024 * 1024)).toFixed(2);
   const maxDaily = Math.max(1, ...stats.daily.map((d) => Math.max(d.visits, d.transfers)));
+  const maxCountryVisits = Math.max(1, ...stats.countries.map((c) => c.visits));
+  const maxDeviceVisits = Math.max(1, ...stats.devices.map((d) => d.count));
+  const maxFormatCount = Math.max(1, ...stats.formats.map((f) => f.count));
+
+  const deliveryRate =
+    stats.totals.transfersSent > 0
+      ? Math.round((stats.totals.transfersDownloaded / stats.totals.transfersSent) * 100)
+      : 0;
+  const avgSizeKb =
+    stats.totals.transfersSent > 0
+      ? Math.round(stats.totals.bytesRelayed / stats.totals.transfersSent / 1024)
+      : 0;
+  const rawIpEnabled = (process.env.LOG_RAW_IP ?? 'true').toLowerCase() !== 'false';
 
   return `<!DOCTYPE html>
 <html lang="en">
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>${escapeHtml(config.appName)} Analytics — ${escapeHtml(domain)}</title>
+  <title>${escapeHtml(config.appName)} Analytics - ${escapeHtml(domain)}</title>
+  <link rel="icon" type="image/png" href="/favicon.png">
   <link rel="stylesheet" href="/assets/editorial.css">
 </head>
 <body>
   <div class="stats-shell">
     <header class="topbar">
       <a href="/" class="brand-lockup">
-        <span class="brand-mark" aria-hidden="true">L</span>
+        <img src="/assets/logo.png" alt="" class="brand-logo-img" width="30" height="30">
         <span class="brand-name">${escapeHtml(config.appName)}</span>
         <span class="brand-domain">/stats</span>
       </a>
       <a href="/" class="role-switcher">← Back to Relay</a>
     </header>
+
+    <section class="privacy-banner" aria-label="Privacy and Data Retention Policy">
+      <div>
+        <strong>Privacy-First Operational Telemetry:</strong> Book files, filenames, titles, and article URLs are never written to disk.
+      </div>
+      <div class="privacy-pills">
+        <span class="privacy-pill">Client Trackers: 0</span>
+        <span class="privacy-pill">Book Storage: RAM-Only (15m TTL)</span>
+        <span class="privacy-pill">IP Mode: ${rawIpEnabled ? 'Raw (LOG_RAW_IP=true)' : 'SHA-256 Hash (LOG_RAW_IP=false)'}</span>
+      </div>
+    </section>
 
     <section class="kpi-grid" aria-label="Summary Metrics">
       <div class="kpi-card">
@@ -742,17 +789,17 @@ function renderStatsDashboard(
       <div class="kpi-card">
         <div class="kpi-label">Unique IPs</div>
         <div class="kpi-value">${stats.totals.uniqueIps.toLocaleString()}</div>
-        <div class="kpi-sub">Server-side logged</div>
+        <div class="kpi-sub">${rawIpEnabled ? 'Direct IP count' : 'Anonymized hash count'}</div>
       </div>
       <div class="kpi-card">
         <div class="kpi-label">Books &amp; Articles Sent</div>
         <div class="kpi-value">${stats.totals.transfersSent.toLocaleString()}</div>
-        <div class="kpi-sub">${stats.totals.transfersDownloaded.toLocaleString()} downloaded on e-reader</div>
+        <div class="kpi-sub">${stats.totals.transfersDownloaded.toLocaleString()} downloaded (${deliveryRate}% delivery rate)</div>
       </div>
       <div class="kpi-card">
         <div class="kpi-label">Volume Relayed</div>
         <div class="kpi-value">${mbRelayed} MB</div>
-        <div class="kpi-sub">${active.activeSessions} live sessions (${activeMemMb} MB in RAM)</div>
+        <div class="kpi-sub">Avg ${avgSizeKb} KB/book · ${active.activeSessions} live (${activeMemMb} MB RAM)</div>
       </div>
     </section>
 
@@ -762,16 +809,16 @@ function renderStatsDashboard(
       </div>
       <div class="daily-chart" role="img" aria-label="14-day activity bar chart">
         ${stats.daily
-          .map((d) => {
-            const heightPct = Math.max(4, Math.round(((d.visits + d.transfers) / maxDaily) * 100));
-            return `
+      .map((d) => {
+        const heightPct = Math.max(4, Math.round(((d.visits + d.transfers) / maxDaily) * 100));
+        return `
               <div class="daily-col" title="${escapeHtml(d.day)}: ${d.visits} visits, ${d.transfers} transfers">
                 <div class="daily-bar" style="height: ${heightPct}%;"></div>
                 <span class="daily-date">${escapeHtml(d.day.slice(5))}</span>
               </div>
             `;
-          })
-          .join('')}
+      })
+      .join('')}
       </div>
     </section>
 
@@ -780,20 +827,23 @@ function renderStatsDashboard(
         <div class="section-header">
           <span class="step-label">Top Countries</span>
         </div>
-        ${
-          stats.countries.length === 0
-            ? '<p class="kpi-sub">No traffic recorded yet.</p>'
-            : stats.countries
-                .map(
-                  (c) => `
+        ${stats.countries.length === 0
+      ? '<p class="kpi-sub">No traffic recorded yet.</p>'
+      : stats.countries
+        .map((c) => {
+          const pct = Math.max(4, Math.round((c.visits / maxCountryVisits) * 100));
+          return `
                   <div class="bar-row">
-                    <span>${c.flag} <strong>${escapeHtml(c.country)}</strong></span>
-                    <span>${c.visits} visits · ${c.transfers} books</span>
+                    <div class="bar-row-top">
+                      <span>${c.flag} <strong>${escapeHtml(c.country)}</strong></span>
+                      <span>${c.visits} visits · ${c.transfers} books</span>
+                    </div>
+                    <div class="bar-track"><div class="bar-fill" style="width: ${pct}%;"></div></div>
                   </div>
-                `
-                )
-                .join('')
-        }
+                `;
+        })
+        .join('')
+    }
       </section>
 
       <section class="card-panel">
@@ -801,25 +851,33 @@ function renderStatsDashboard(
           <span class="step-label">Device &amp; Format Breakdown</span>
         </div>
         ${stats.devices
-          .map(
-            (d) => `
+      .map((d) => {
+        const pct = Math.max(4, Math.round((d.count / maxDeviceVisits) * 100));
+        return `
             <div class="bar-row">
-              <span>Device: <strong>${escapeHtml(d.deviceType)}</strong></span>
-              <span>${d.count} visits</span>
+              <div class="bar-row-top">
+                <span>Device: <strong>${escapeHtml(d.deviceType)}</strong></span>
+                <span>${d.count} visits</span>
+              </div>
+              <div class="bar-track"><div class="bar-fill" style="width: ${pct}%;"></div></div>
             </div>
-          `
-          )
-          .join('')}
+          `;
+      })
+      .join('')}
         ${stats.formats
-          .map(
-            (f) => `
+      .map((f) => {
+        const pct = Math.max(4, Math.round((f.count / maxFormatCount) * 100));
+        return `
             <div class="bar-row">
-              <span>Format: <code>${escapeHtml(f.format)}</code></span>
-              <span>${f.count} sent (${(f.bytes / (1024 * 1024)).toFixed(1)} MB)</span>
+              <div class="bar-row-top">
+                <span>Format: <code>${escapeHtml(f.format)}</code></span>
+                <span>${f.count} sent (${(f.bytes / (1024 * 1024)).toFixed(1)} MB)</span>
+              </div>
+              <div class="bar-track"><div class="bar-fill" style="width: ${pct}%;"></div></div>
             </div>
-          `
-          )
-          .join('')}
+          `;
+      })
+      .join('')}
       </section>
     </div>
 
@@ -838,12 +896,11 @@ function renderStatsDashboard(
             </tr>
           </thead>
           <tbody>
-            ${
-              stats.recentTransfers.length === 0
-                ? '<tr><th>—</th><td colspan="5">No transfers recorded yet.</td></tr>'
-                : stats.recentTransfers
-                    .map(
-                      (t) => `
+            ${stats.recentTransfers.length === 0
+      ? '<tr><th>-</th><td colspan="5">No transfers recorded yet.</td></tr>'
+      : stats.recentTransfers
+        .map(
+          (t) => `
                       <tr>
                         <th>${escapeHtml(t.sessionKey)}</th>
                         <td>${escapeHtml(t.createdAt)}</td>
@@ -853,9 +910,9 @@ function renderStatsDashboard(
                         <td>${t.downloaded ? '✓ Downloaded' : 'Queued'}</td>
                       </tr>
                     `
-                    )
-                    .join('')
-            }
+        )
+        .join('')
+    }
           </tbody>
         </table>
       </div>
@@ -875,12 +932,11 @@ function renderStatsDashboard(
             </tr>
           </thead>
           <tbody>
-            ${
-              stats.recentVisits.length === 0
-                ? '<tr><th>—</th><td colspan="4">No visits recorded yet.</td></tr>'
-                : stats.recentVisits
-                    .map(
-                      (v) => `
+            ${stats.recentVisits.length === 0
+      ? '<tr><th>-</th><td colspan="4">No visits recorded yet.</td></tr>'
+      : stats.recentVisits
+        .map(
+          (v) => `
                       <tr>
                         <th>#${v.id}</th>
                         <td>${escapeHtml(v.createdAt)}</td>
@@ -889,9 +945,9 @@ function renderStatsDashboard(
                         <td>${escapeHtml(v.deviceType)}</td>
                       </tr>
                     `
-                    )
-                    .join('')
-            }
+        )
+        .join('')
+    }
           </tbody>
         </table>
       </div>

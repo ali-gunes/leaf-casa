@@ -107,25 +107,19 @@ a:hover {
 
 .brand-lockup {
   display: flex;
-  align-items: baseline;
+  align-items: center;
   gap: 10px;
   text-decoration: none;
   color: var(--ink-primary);
 }
 
-.brand-mark {
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  width: 28px;
-  height: 28px;
-  border-radius: 6px;
-  background-color: var(--leaf-green);
-  color: #ffffff;
-  font-family: var(--font-serif);
-  font-size: 17px;
-  font-weight: 600;
-  transform: translateY(-1px);
+.brand-logo-img {
+  width: 30px;
+  height: 30px;
+  border-radius: 7px;
+  object-fit: cover;
+  display: block;
+  border: 1px solid rgba(43, 91, 66, 0.15);
 }
 
 .brand-name {
@@ -380,13 +374,37 @@ a:hover {
   margin-bottom: 6px;
 }
 
-/* Article URL Bar */
+/* Article URL Section */
+.article-block {
+  margin-top: 20px;
+  padding-top: 18px;
+  border-top: 1px solid var(--border-stone);
+}
+
+.article-header {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin-bottom: 10px;
+}
+
+.article-title {
+  font-family: var(--font-serif);
+  font-size: 18px;
+  font-weight: 600;
+  color: var(--ink-primary);
+}
+
+.article-desc {
+  font-size: 13.5px;
+  color: var(--ink-secondary);
+}
+
 .article-form {
   display: flex;
   gap: 10px;
-  margin-top: 18px;
-  padding-top: 18px;
-  border-top: 1px solid var(--border-stone);
 }
 
 .article-input {
@@ -513,6 +531,27 @@ a:hover {
   text-align: center;
   font-size: 13px;
   color: var(--ink-muted);
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  align-items: center;
+}
+
+.editorial-footer-links {
+  display: inline-flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.editorial-footer-links a {
+  color: var(--ink-secondary);
+  font-weight: 500;
+  text-decoration: underline;
+  text-underline-offset: 3px;
+}
+
+.editorial-footer-links a:hover {
+  color: var(--leaf-green);
 }
 
 /* /stats Dashboard Grid & Responsive Table (modern-web-guidance: responsive-table) */
@@ -561,16 +600,67 @@ a:hover {
 
 .bar-row {
   display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 10px;
-  padding: 7px 0;
+  flex-direction: column;
+  gap: 5px;
+  padding: 9px 0;
   border-bottom: 1px solid var(--border-stone);
   font-size: 14px;
 }
 
 .bar-row:last-child {
   border-bottom: none;
+}
+
+.bar-row-top {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+}
+
+.bar-track {
+  width: 100%;
+  height: 6px;
+  background-color: var(--bg-subtle);
+  border-radius: 99px;
+  overflow: hidden;
+}
+
+.bar-fill {
+  height: 100%;
+  background-color: var(--leaf-green);
+  border-radius: 99px;
+}
+
+.privacy-banner {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 14px 18px;
+  margin-bottom: 22px;
+  border-radius: 12px;
+  background-color: var(--leaf-green-soft);
+  border: 1px solid rgba(43, 91, 66, 0.22);
+  font-size: 13.5px;
+  color: var(--ink-primary);
+}
+
+.privacy-pills {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.privacy-pill {
+  font-family: var(--font-mono);
+  font-size: 12px;
+  padding: 3px 10px;
+  border-radius: 99px;
+  background-color: #ffffff;
+  color: var(--leaf-green);
+  border: 1px solid rgba(43, 91, 66, 0.2);
 }
 
 .daily-chart {
