@@ -1,21 +1,22 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import crypto from 'node:crypto';
+import { createRequire } from 'node:module';
 import type { IncomingMessage } from 'node:http';
 import { DatabaseSync } from 'node:sqlite';
 import type { DeviceKind } from './sessionStore.ts';
 
+const esmRequire = createRequire(import.meta.url);
 let geoipModule: { lookup: (ip: string) => { country?: string } | null } | null | undefined;
 
-function lookupGeoCountry(ip: string): string {
-  if (!ip || ip === '127.0.0.1' || ip === '::1' || ip.startsWith('192.168.') || ip.startsWith('10.')) {
+export function lookupGeoCountry(ip: string): string {
+  if (!ip || ip === '127.0.0.1' || ip === '::1' || ip === '0.0.0.0' || ip.startsWith('192.168.') || ip.startsWith('10.') || ip.startsWith('anon-')) {
     return 'LOCAL';
   }
   if (geoipModule === undefined) {
     try {
-      // Lazy-load geoip-lite only when needed
-      // eslint-disable-next-line @typescript-eslint/no-require-imports
-      geoipModule = require('geoip-lite');
+      // Lazy-load geoip-lite via createRequire for ESM compatibility
+      geoipModule = esmRequire('geoip-lite');
     } catch {
       geoipModule = null;
     }
@@ -167,6 +168,57 @@ export class AnalyticsStore {
 
       CREATE INDEX IF NOT EXISTS idx_transfers_created_at ON transfers(created_at);
     `);
+
+    this.backfillUnknownCountries();
+  }
+
+  private backfillUnknownCountries(): void {
+    try {
+      const unknownVisits = this.db
+        .prepare(`SELECT DISTINCT ip FROM visits WHERE country = 'XX'`)
+        .all() as Array<{ ip: string }>;
+
+      if (unknownVisits.length > 0) {
+        const updateVisit = this.db.prepare(`UPDATE visits SET country = ? WHERE ip = ? AND country = 'XX'`);
+        for (const row of unknownVisits) {
+          const resolved = lookupGeoCountry(row.ip);
+          if (resolved && resolved !== 'XX') {
+            updateVisit.run(resolved, row.ip);
+          }
+        }
+      }
+
+      const unknownTransfers = this.db
+        .prepare(
+          `SELECT id, sender_ip, sender_country, receiver_ip, receiver_country
+           FROM transfers
+           WHERE sender_country = 'XX' OR receiver_country = 'XX'`
+        )
+        .all() as Array<{
+        id: number;
+        sender_ip: string;
+        sender_country: string;
+        receiver_ip: string;
+        receiver_country: string;
+      }>;
+
+      if (unknownTransfers.length > 0) {
+        const updateTransfer = this.db.prepare(
+          `UPDATE transfers SET sender_country = ?, receiver_country = ? WHERE id = ?`
+        );
+        for (const row of unknownTransfers) {
+          const senderCountry =
+            row.sender_country === 'XX' ? lookupGeoCountry(row.sender_ip) : row.sender_country;
+          const receiverCountry =
+            row.receiver_country === 'XX' ? lookupGeoCountry(row.receiver_ip) : row.receiver_country;
+          if (senderCountry !== row.sender_country || receiverCountry !== row.receiver_country) {
+            updateTransfer.run(senderCountry, receiverCountry, row.id);
+          }
+        }
+      }
+    } catch {
+      // Ignore backfill errors
+    }
   }
 
   logVisit(params: {
