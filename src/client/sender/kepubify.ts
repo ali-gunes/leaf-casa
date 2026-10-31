@@ -25,20 +25,59 @@ export function inspectAndConvertEpub(
   originalFilename: string,
   convertToKepub: boolean
 ): ProcessedBook {
-  const entries = unzipSync(rawBytes);
+  if (
+    rawBytes.byteLength < 8 ||
+    rawBytes[0] !== 0x50 ||
+    rawBytes[1] !== 0x4b ||
+    rawBytes[2] !== 0x03 ||
+    rawBytes[3] !== 0x04
+  ) {
+    throw new Error('Invalid EPUB file (not a valid ZIP archive).');
+  }
+
+  let fileCount = 0;
+  let totalUncompressed = 0;
+  const maxUncompressed = 250 * 1024 * 1024; // 250 MB safety cap against zip bombs
+
+  const entries = unzipSync(rawBytes, {
+    filter(file) {
+      fileCount++;
+      if (fileCount > 4000) {
+        throw new Error('EPUB contains too many internal files (>4000).');
+      }
+      totalUncompressed += file.originalSize;
+      if (totalUncompressed > maxUncompressed) {
+        throw new Error('EPUB uncompressed content exceeds 250 MB safety limit.');
+      }
+      return true;
+    },
+  });
 
   let title: string | undefined;
   let author: string | undefined;
+  let hasEpubStructure = false;
 
-  // Locate OPF metadata
+  // Locate OPF metadata and verify EPUB markers
   for (const [entryPath, content] of Object.entries(entries)) {
-    if (entryPath.toLowerCase().endsWith('.opf')) {
+    const lowerPath = entryPath.toLowerCase();
+    if (
+      lowerPath === 'mimetype' ||
+      lowerPath === 'meta-inf/container.xml' ||
+      lowerPath.endsWith('.opf')
+    ) {
+      hasEpubStructure = true;
+    }
+    if (lowerPath.endsWith('.opf')) {
       const xml = strFromU8(content);
       const parsedMeta = extractOpfMetadata(xml);
       if (parsedMeta.title) title = parsedMeta.title;
       if (parsedMeta.author) author = parsedMeta.author;
       break;
     }
+  }
+
+  if (!hasEpubStructure) {
+    throw new Error('Invalid EPUB file (missing OPF metadata or container.xml).');
   }
 
   const baseName = originalFilename

@@ -213,8 +213,13 @@ test('End-to-end HTTP relay, queue download tracking, and SQLite /stats auth', a
     assert.equal(key.length, 4);
     assert.equal(sessionData.qrSvg.includes('<svg'), true);
 
-    // 3. Upload a book to the session
-    const dummyEpub = Buffer.from('PK-dummy-epub-bytes');
+    // 3. Upload a valid EPUB book to the session
+    const validEpubBytes = Buffer.from(
+      zipSync({
+        mimetype: [strToU8('application/epub+zip'), { level: 0 }],
+        'OEBPS/content.opf': strToU8('<package><metadata><dc:title>Dune</dc:title></metadata></package>'),
+      })
+    );
     const upRes = await request(`/api/upload/${key}`, {
       method: 'POST',
       headers: {
@@ -222,7 +227,7 @@ test('End-to-end HTTP relay, queue download tracking, and SQLite /stats auth', a
         'X-File-Name': encodeURIComponent('Dune.kepub.epub'),
         'X-Book-Format': '.kepub.epub',
       },
-      body: dummyEpub,
+      body: validEpubBytes,
     });
     assert.equal(upRes.status, 200);
     const upData = upRes.json();
@@ -238,7 +243,7 @@ test('End-to-end HTTP relay, queue download tracking, and SQLite /stats auth', a
     const dlRes = await request(`/api/download/${key}/${fileId}`);
     assert.equal(dlRes.status, 200);
     assert.equal(dlRes.headers['content-type'], 'application/epub+zip');
-    assert.deepEqual(dlRes.body, dummyEpub);
+    assert.deepEqual(dlRes.body, validEpubBytes);
 
     // 6. Verify file is now marked downloaded and pendingCount is 0
     const statusAfter = (await request(`/api/status/${key}`)).json();
@@ -256,6 +261,66 @@ test('End-to-end HTTP relay, queue download tracking, and SQLite /stats auth', a
     assert.equal(authedStats.status, 200);
     const statsJson = authedStats.json();
     assert.equal(statsJson.totals.transfersSent, 1);
+
+    // 8. Security & Edge Cases: Disguised MP4 renamed to .epub and .pdf are rejected with 415
+    const fakeMp4Bytes = Buffer.from('\x00\x00\x00\x18ftypmp42\x00\x00\x00\x00mp42isomFakeVideoData');
+    const badEpubRes = await request(`/api/upload/${key}`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/octet-stream',
+        'X-File-Name': 'movie.epub',
+        'X-Book-Format': '.epub',
+      },
+      body: fakeMp4Bytes,
+    });
+    assert.equal(badEpubRes.status, 415);
+
+    const badPdfRes = await request(`/api/upload/${key}`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/octet-stream',
+        'X-File-Name': 'movie.pdf',
+        'X-Book-Format': '.pdf',
+      },
+      body: fakeMp4Bytes,
+    });
+    assert.equal(badPdfRes.status, 415);
+
+    // 9. Random ZIP without EPUB structure disguised as .epub is rejected with 415
+    const nonEpubZip = Buffer.from(
+      zipSync({
+        'readme.txt': strToU8('Just a normal zip, not an epub'),
+      })
+    );
+    const nonEpubRes = await request(`/api/upload/${key}`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/octet-stream',
+        'X-File-Name': 'archive.epub',
+        'X-Book-Format': '.epub',
+      },
+      body: nonEpubZip,
+    });
+    assert.equal(nonEpubRes.status, 415);
+
+    // 10. Valid PDF with %PDF- signature succeeds
+    const validPdfBytes = Buffer.from('%PDF-1.7\n1 0 obj\n<<>>\nendobj\n%%EOF');
+    const goodPdfRes = await request(`/api/upload/${key}`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/octet-stream',
+        'X-File-Name': 'paper.pdf',
+        'X-Book-Format': '.pdf',
+      },
+      body: validPdfBytes,
+    });
+    assert.equal(goodPdfRes.status, 200);
+
+    // 11. Internal Docker container hostnames & private subnets are blocked by SSRF validator
+    assert.throws(() => validatePublicUrl('http://lynto-admin:3000/'), /Private or local/);
+    assert.throws(() => validatePublicUrl('http://portainer:9000/'), /Private or local/);
+    assert.throws(() => validatePublicUrl('http://172.18.0.5:3000/'), /Private or local/);
+    assert.throws(() => validatePublicUrl('https://user:pass@example.com/article'), /embedded credentials/);
   } finally {
     server.close();
     analytics.close();

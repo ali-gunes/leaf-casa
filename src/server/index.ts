@@ -1,4 +1,5 @@
 import http, { type IncomingMessage, type ServerResponse } from 'node:http';
+import crypto from 'node:crypto';
 import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -8,6 +9,7 @@ import {
   detectDevice,
   normalizeKey,
   sanitizeFilename,
+  validateBookBuffer,
   type Session,
 } from './sessionStore.ts';
 import { AnalyticsStore, extractClientAddress, countryToFlag } from './analytics.ts';
@@ -66,11 +68,46 @@ function resolveAssetPath(relativeFromRoot: string): string {
   return candidates[0];
 }
 
+function safeCompare(a: string, b: string): boolean {
+  const hashA = crypto.createHash('sha256').update(a).digest();
+  const hashB = crypto.createHash('sha256').update(b).digest();
+  return crypto.timingSafeEqual(hashA, hashB);
+}
+
+class SlidingWindowRateLimiter {
+  private buckets = new Map<string, { count: number; resetAt: number }>();
+
+  constructor() {
+    const timer = setInterval(() => {
+      const now = Date.now();
+      for (const [key, entry] of this.buckets.entries()) {
+        if (entry.resetAt <= now) this.buckets.delete(key);
+      }
+    }, 60_000);
+    timer.unref();
+  }
+
+  allow(bucketKey: string, maxRequests: number, windowMs: number): boolean {
+    const now = Date.now();
+    const existing = this.buckets.get(bucketKey);
+    if (!existing || existing.resetAt <= now) {
+      this.buckets.set(bucketKey, { count: 1, resetAt: now + windowMs });
+      return true;
+    }
+    if (existing.count >= maxRequests) {
+      return false;
+    }
+    existing.count++;
+    return true;
+  }
+}
+
 export function createLeafServer(customConfig?: Partial<AppConfig>) {
   const config = loadConfig(customConfig);
   const sessions = new SessionStore();
   const analytics = new AnalyticsStore(config.dbPath);
   const qrCache = new Map<string, string>();
+  const rateLimiter = new SlidingWindowRateLimiter();
 
   async function getQrForSessionKey(key: string): Promise<string> {
     const cached = qrCache.get(key);
@@ -96,7 +133,7 @@ export function createLeafServer(customConfig?: Partial<AppConfig>) {
     if (!config.statsPassword) return true;
 
     const queryToken = url.searchParams.get('key') || url.searchParams.get('password');
-    if (queryToken && queryToken === config.statsPassword) {
+    if (queryToken && safeCompare(queryToken, config.statsPassword)) {
       return true;
     }
 
@@ -109,7 +146,7 @@ export function createLeafServer(customConfig?: Partial<AppConfig>) {
 
     const user = decoded.slice(0, sepIndex);
     const pass = decoded.slice(sepIndex + 1);
-    return user === config.statsUser && pass === config.statsPassword;
+    return safeCompare(user, config.statsUser) && safeCompare(pass, config.statsPassword);
   }
 
   const server = http.createServer(async (req: IncomingMessage, res: ServerResponse) => {
@@ -152,6 +189,9 @@ export function createLeafServer(customConfig?: Partial<AppConfig>) {
       // API: Generate or refresh session key
       if ((method === 'POST' || method === 'GET') && pathname === '/api/generate') {
         const clientAddr = extractClientAddress(req);
+        if (!rateLimiter.allow(`gen:${clientAddr.rawIp}`, 25, 60_000)) {
+          return sendJson(res, 429, { error: 'Too many session requests. Please wait a moment.' });
+        }
         const device = detectDevice(req.headers['user-agent']);
         const preferredKey = url.searchParams.get('key') || undefined;
         const session = sessions.createSession({
@@ -166,6 +206,10 @@ export function createLeafServer(customConfig?: Partial<AppConfig>) {
 
       // API: Get session status
       if (method === 'GET' && pathname.startsWith('/api/status/')) {
+        const clientAddr = extractClientAddress(req);
+        if (!rateLimiter.allow(`status:${clientAddr.rawIp}`, 90, 60_000)) {
+          return sendJson(res, 429, { error: 'Too many status requests. Please slow down.' });
+        }
         const key = normalizeKey(decodeURIComponent(pathname.slice('/api/status/'.length)));
         const session = sessions.getSession(key, true);
         if (!session) {
@@ -226,6 +270,11 @@ export function createLeafServer(customConfig?: Partial<AppConfig>) {
 
       // API: Upload book buffer to session
       if (method === 'POST' && pathname.startsWith('/api/upload/')) {
+        const senderAddr = extractClientAddress(req);
+        if (!rateLimiter.allow(`upload:${senderAddr.rawIp}`, 25, 60_000)) {
+          return sendJson(res, 429, { error: 'Upload rate limit exceeded. Please wait a minute.' });
+        }
+
         const key = normalizeKey(decodeURIComponent(pathname.slice('/api/upload/'.length)));
         const session = sessions.getSession(key, true);
         if (!session) {
@@ -233,12 +282,19 @@ export function createLeafServer(customConfig?: Partial<AppConfig>) {
         }
 
         const maxBytes = config.maxFileSizeMb * 1024 * 1024;
+        const declaredLength = Number(req.headers['content-length'] || 0);
+        if (declaredLength > maxBytes) {
+          return sendJson(res, 413, {
+            error: `Payload exceeds maximum size of ${config.maxFileSizeMb} MB`,
+          });
+        }
+
         const fileBuffer = await readBodyBuffer(req, maxBytes);
         if (fileBuffer.byteLength === 0) {
           return sendJson(res, 400, { error: 'Uploaded file is empty' });
         }
 
-        const rawName = decodeURIComponent(String(req.headers['x-file-name'] || 'book.epub'));
+        const rawName = safeDecodeURIComponent(String(req.headers['x-file-name'] || 'book.epub'));
         const filename = sanitizeFilename(rawName);
         const rawFormat = String(req.headers['x-book-format'] || '');
         const format: '.kepub.epub' | '.epub' | '.pdf' =
@@ -248,15 +304,20 @@ export function createLeafServer(customConfig?: Partial<AppConfig>) {
               ? '.pdf'
               : '.epub';
 
+        // Inspect real binary magic bytes and EPUB structure to block disguised files (e.g., renamed .mp4/.exe)
+        const validation = validateBookBuffer(fileBuffer, format);
+        if (!validation.valid) {
+          return sendJson(res, 415, { error: validation.reason || 'Unsupported or corrupted file format.' });
+        }
+
         const title = req.headers['x-book-title']
-          ? decodeURIComponent(String(req.headers['x-book-title']))
+          ? safeDecodeURIComponent(String(req.headers['x-book-title'])).slice(0, 200)
           : undefined;
         const author = req.headers['x-book-author']
-          ? decodeURIComponent(String(req.headers['x-book-author']))
+          ? safeDecodeURIComponent(String(req.headers['x-book-author'])).slice(0, 200)
           : undefined;
 
         const mimeType = format === '.pdf' ? 'application/pdf' : 'application/epub+zip';
-        const senderAddr = extractClientAddress(req);
 
         const transferId = analytics.logTransfer({
           sessionKey: session.key,
@@ -292,6 +353,11 @@ export function createLeafServer(customConfig?: Partial<AppConfig>) {
 
       // API: Convert Web Article URL -> EPUB/KePub and add to session queue
       if (method === 'POST' && pathname.startsWith('/api/article/')) {
+        const senderAddr = extractClientAddress(req);
+        if (!rateLimiter.allow(`article:${senderAddr.rawIp}`, 15, 60_000)) {
+          return sendJson(res, 429, { error: 'Article conversion rate limit exceeded. Please wait a minute.' });
+        }
+
         const key = normalizeKey(decodeURIComponent(pathname.slice('/api/article/'.length)));
         const session = sessions.getSession(key, true);
         if (!session) {
@@ -307,12 +373,7 @@ export function createLeafServer(customConfig?: Partial<AppConfig>) {
           return sendJson(res, 400, { error: 'Article URL is required' });
         }
 
-        const built = await fetchAndBuildArticleEpub(articleUrl, {
-          asKepub,
-          htmlOverride: typeof body.htmlOverride === 'string' ? body.htmlOverride : undefined,
-        });
-
-        const senderAddr = extractClientAddress(req);
+        const built = await fetchAndBuildArticleEpub(articleUrl, { asKepub });
         const transferId = analytics.logTransfer({
           sessionKey: session.key,
           senderIp: senderAddr.storedIp,
@@ -378,7 +439,11 @@ export function createLeafServer(customConfig?: Partial<AppConfig>) {
 
       // Protected /stats JSON & HTML Dashboard
       if (method === 'GET' && (pathname === '/stats' || pathname === '/api/stats')) {
+        const clientAddr = extractClientAddress(req);
         if (!checkStatsAuth(req, url)) {
+          if (!rateLimiter.allow(`stats-fail:${clientAddr.rawIp}`, 10, 5 * 60_000)) {
+            return sendJson(res, 429, { error: 'Too many failed authentication attempts.' });
+          }
           res.writeHead(401, {
             'WWW-Authenticate': `Basic realm="${config.appName} Analytics"`,
             'Content-Type': 'text/plain; charset=utf-8',
@@ -450,10 +515,20 @@ export function createLeafServer(customConfig?: Partial<AppConfig>) {
 
       sendJson(res, 404, { error: 'Not found' });
     } catch (err: any) {
-      const status = err?.message?.includes('exceeds maximum') ? 413 : 500;
-      sendJson(res, status, { error: err?.message || 'Internal server error' });
+      const msg = String(err?.message || 'Internal server error');
+      const status = msg.includes('exceeds maximum') || msg.includes('quota exceeded')
+        ? 413
+        : msg.includes('queue limit reached')
+          ? 429
+          : 400;
+      sendJson(res, status, { error: msg });
     }
   });
+
+  // Harden HTTP timeouts against Slowloris / hanging sockets
+  server.headersTimeout = 15_000;
+  server.requestTimeout = 60_000;
+  server.keepAliveTimeout = 10_000;
 
   return {
     server,
@@ -461,6 +536,14 @@ export function createLeafServer(customConfig?: Partial<AppConfig>) {
     sessions,
     analytics,
   };
+}
+
+function safeDecodeURIComponent(val: string): string {
+  try {
+    return decodeURIComponent(val);
+  } catch {
+    return val;
+  }
 }
 
 function sendJson(res: ServerResponse, statusCode: number, data: unknown): void {

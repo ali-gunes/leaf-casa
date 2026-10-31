@@ -1,8 +1,13 @@
 import crypto from 'node:crypto';
+import dns from 'node:dns/promises';
+import net from 'node:net';
 import { Readability } from '@mozilla/readability';
 import { parseHTML } from 'linkedom';
 import { zipSync, strToU8 } from 'fflate';
 import { sanitizeFilename } from './sessionStore.ts';
+
+const MAX_ARTICLE_HTML_BYTES = 5 * 1024 * 1024; // 5 MB max article HTML
+const MAX_REDIRECT_HOPS = 3;
 
 export interface ArticleEpubResult {
   title: string;
@@ -15,19 +20,59 @@ export interface ArticleEpubResult {
 
 const PRIVATE_HOST_PATTERNS = [
   /^localhost$/i,
+  /\.localhost$/i,
+  /\.local$/i,
+  /\.internal$/i,
+  /\.lan$/i,
   /^127\./,
   /^10\./,
   /^192\.168\./,
   /^169\.254\./,
   /^172\.(1[6-9]|2[0-9]|3[0-1])\./,
+  /^100\.(6[4-9]|[7-9][0-9]|1[0-1][0-9]|12[0-7])\./,
   /^0\./,
   /^\[?::1\]?$/,
+  /^\[?::\]?$/,
   /^\[?fe80:/i,
   /^\[?fc00:/i,
   /^\[?fd00:/i,
 ];
 
+export function isPrivateIpAddress(ipRaw: string): boolean {
+  const ip = ipRaw.replace(/^\[|\]$/g, '').replace(/^::ffff:/i, '');
+  for (const pattern of PRIVATE_HOST_PATTERNS) {
+    if (pattern.test(ip)) return true;
+  }
+  if (net.isIPv4(ip)) {
+    const parts = ip.split('.').map(Number);
+    if (parts[0] === 127 || parts[0] === 10 || parts[0] === 0) return true;
+    if (parts[0] === 169 && parts[1] === 254) return true;
+    if (parts[0] === 192 && parts[1] === 168) return true;
+    if (parts[0] === 172 && parts[1] >= 16 && parts[1] <= 31) return true;
+    if (parts[0] === 100 && parts[1] >= 64 && parts[1] <= 127) return true;
+    if (parts[0] >= 224) return true; // Multicast & reserved
+  }
+  if (net.isIPv6(ip)) {
+    const lower = ip.toLowerCase();
+    if (
+      lower === '::1' ||
+      lower === '::' ||
+      lower.startsWith('fe80:') ||
+      lower.startsWith('fc') ||
+      lower.startsWith('fd') ||
+      lower.startsWith('ff')
+    ) {
+      return true;
+    }
+  }
+  return false;
+}
+
 export function validatePublicUrl(rawUrl: string): URL {
+  if (rawUrl.length > 2048) {
+    throw new Error('Article URL is too long.');
+  }
+
   let parsed: URL;
   try {
     parsed = new URL(rawUrl.trim());
@@ -39,6 +84,10 @@ export function validatePublicUrl(rawUrl: string): URL {
     throw new Error('Only HTTP and HTTPS article URLs are supported.');
   }
 
+  if (parsed.username || parsed.password) {
+    throw new Error('URLs with embedded credentials are not allowed.');
+  }
+
   const host = parsed.hostname;
   for (const pattern of PRIVATE_HOST_PATTERNS) {
     if (pattern.test(host)) {
@@ -46,35 +95,130 @@ export function validatePublicUrl(rawUrl: string): URL {
     }
   }
 
+  // Block single-label internal Docker/intranet hostnames (e.g. http://lynto-admin:3000)
+  if (!host.includes('.')) {
+    throw new Error('Private or local network URLs are not allowed.');
+  }
+
+  if (net.isIP(host.replace(/^\[|\]$/g, '')) && isPrivateIpAddress(host)) {
+    throw new Error('Private or local network URLs are not allowed.');
+  }
+
   return parsed;
+}
+
+async function assertHostnameResolvesToPublicIp(hostname: string): Promise<void> {
+  const cleanHost = hostname.replace(/^\[|\]$/g, '');
+  if (net.isIP(cleanHost)) {
+    if (isPrivateIpAddress(cleanHost)) {
+      throw new Error('Private or local network URLs are not allowed.');
+    }
+    return;
+  }
+
+  const records = await dns.lookup(cleanHost, { all: true });
+  if (!records || records.length === 0) {
+    throw new Error('Could not resolve article hostname.');
+  }
+
+  for (const rec of records) {
+    if (isPrivateIpAddress(rec.address)) {
+      throw new Error('Article hostname resolves to a private or local network IP.');
+    }
+  }
+}
+
+async function fetchPublicHtmlSafely(initialUrl: URL): Promise<{ html: string; finalUrl: URL }> {
+  let currentUrl = initialUrl;
+
+  for (let hop = 0; hop <= MAX_REDIRECT_HOPS; hop++) {
+    await assertHostnameResolvesToPublicIp(currentUrl.hostname);
+
+    const controller = new AbortController();
+    const timer = setTimeout(() => controller.abort(), 12_000);
+
+    try {
+      const response = await fetch(currentUrl.toString(), {
+        signal: controller.signal,
+        redirect: 'manual',
+        headers: {
+          'User-Agent': 'Mozilla/5.0 (compatible; LeafReader/1.0; +https://leaf.casa)',
+          Accept: 'text/html,application/xhtml+xml',
+        },
+      });
+
+      if (response.status >= 300 && response.status < 400) {
+        const location = response.headers.get('location');
+        if (!location) {
+          throw new Error('Redirect response missing Location header.');
+        }
+        const nextUrl = new URL(location, currentUrl);
+        currentUrl = validatePublicUrl(nextUrl.toString());
+        continue;
+      }
+
+      if (!response.ok) {
+        throw new Error(`Upstream returned HTTP ${response.status}`);
+      }
+
+      const contentType = (response.headers.get('content-type') || '').toLowerCase();
+      if (
+        contentType &&
+        !contentType.includes('text/html') &&
+        !contentType.includes('application/xhtml+xml') &&
+        !contentType.includes('text/plain')
+      ) {
+        throw new Error('URL does not point to an HTML web page.');
+      }
+
+      const contentLength = Number(response.headers.get('content-length') || 0);
+      if (contentLength > MAX_ARTICLE_HTML_BYTES) {
+        throw new Error('Article page is too large (exceeds 5 MB limit).');
+      }
+
+      if (!response.body) {
+        throw new Error('Empty response from article URL.');
+      }
+
+      const chunks: Uint8Array[] = [];
+      let received = 0;
+      const reader = response.body.getReader();
+
+      while (true) {
+        const { done, value } = await reader.read();
+        if (done) break;
+        if (value) {
+          received += value.byteLength;
+          if (received > MAX_ARTICLE_HTML_BYTES) {
+            await reader.cancel();
+            throw new Error('Article page is too large (exceeds 5 MB limit).');
+          }
+          chunks.push(value);
+        }
+      }
+
+      const html = Buffer.concat(chunks).toString('utf8');
+      return { html, finalUrl: currentUrl };
+    } finally {
+      clearTimeout(timer);
+    }
+  }
+
+  throw new Error('Too many redirects while fetching article.');
 }
 
 export async function fetchAndBuildArticleEpub(
   rawUrl: string,
   options?: { asKepub?: boolean; htmlOverride?: string }
 ): Promise<ArticleEpubResult> {
-  const url = validatePublicUrl(rawUrl);
+  let url = validatePublicUrl(rawUrl);
   const asKepub = Boolean(options?.asKepub);
 
   let html = options?.htmlOverride;
   if (!html) {
-    const controller = new AbortController();
-    const timer = setTimeout(() => controller.abort(), 12_000);
-    try {
-      const response = await fetch(url.toString(), {
-        signal: controller.signal,
-        headers: {
-          'User-Agent': 'Mozilla/5.0 (compatible; LeafReader/1.0; +https://leaf.casa)',
-          Accept: 'text/html,application/xhtml+xml',
-        },
-      });
-      if (!response.ok) {
-        throw new Error(`Upstream returned HTTP ${response.status}`);
-      }
-      html = await response.text();
-    } finally {
-      clearTimeout(timer);
-    }
+    const fetched = await fetchPublicHtmlSafely(url);
+    html = fetched.html;
+    url = fetched.finalUrl;
   }
 
   const { document } = parseHTML(html);

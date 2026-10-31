@@ -1,7 +1,11 @@
 import crypto from 'node:crypto';
+import { unzipSync } from 'fflate';
 
 export const CROCKFORD_ALPHABET = '23456789ABCDEFGHJKMNPQRSTVWXYZ';
 export const KEY_LENGTH = 4;
+export const MAX_FILES_PER_SESSION = 15;
+export const MAX_SESSION_BYTES = 150 * 1024 * 1024;
+export const MAX_SESSIONS_PER_IP = 10;
 
 export type DeviceKind =
   | 'kobo'
@@ -208,6 +212,17 @@ export class SessionStore {
       }
     }
 
+    // Prevent a single IP from exhausting active sessions; evict oldest empty session from same IP
+    if (params.receiverIp) {
+      const ipSessions = Array.from(this.sessions.values())
+        .filter((s) => s.receiverIp === params.receiverIp)
+        .sort((a, b) => a.createdAt - b.createdAt);
+      while (ipSessions.length >= MAX_SESSIONS_PER_IP) {
+        const oldest = ipSessions.shift();
+        if (oldest) this.deleteSession(oldest.key);
+      }
+    }
+
     const key = this.generateUniqueKey();
     const session: Session = {
       key,
@@ -273,6 +288,15 @@ export class SessionStore {
     const session = this.getSession(rawKey, true);
     if (!session) {
       throw new Error('Session not found or expired.');
+    }
+
+    if (session.files.length >= MAX_FILES_PER_SESSION) {
+      throw new Error(`Session queue limit reached (maximum ${MAX_FILES_PER_SESSION} files per session).`);
+    }
+
+    const sessionBytes = session.files.reduce((acc, f) => acc + f.size, 0);
+    if (sessionBytes + file.buffer.byteLength > MAX_SESSION_BYTES) {
+      throw new Error('Session storage quota exceeded (maximum 150 MB per session).');
     }
 
     // Evict already-downloaded buffers first if memory pool is under pressure
@@ -390,7 +414,18 @@ export class SessionStore {
     for (const [key, session] of this.sessions.entries()) {
       if (session.expiresAt <= now) {
         this.deleteSession(key);
+        continue;
       }
+      // Remove already-downloaded files from sessions to free RAM under pressure
+      const remaining: QueuedFile[] = [];
+      for (const f of session.files) {
+        if (f.downloaded) {
+          this.currentMemoryBytes = Math.max(0, this.currentMemoryBytes - f.buffer.byteLength);
+        } else {
+          remaining.push(f);
+        }
+      }
+      session.files = remaining;
     }
   }
 
@@ -416,8 +451,95 @@ export class SessionStore {
 
 export function sanitizeFilename(name: string): string {
   const cleaned = name
-    .replace(/[\r\n\t/\\?%*:|"<>]/g, '_')
+    .replace(/[\x00-\x1f\x7f\r\n\t/\\?%*:|"<>]/g, '_')
+    .replace(/^\.+/, '')
     .replace(/\s+/g, ' ')
-    .trim();
+    .trim()
+    .slice(0, 180);
   return cleaned || 'book.epub';
 }
+
+/**
+ * Validates binary magic bytes and internal structure so renamed files
+ * (e.g., an .mp4 or .exe renamed to .epub or .pdf) are rejected.
+ */
+export function validateBookBuffer(
+  buffer: Buffer,
+  expectedFormat: '.kepub.epub' | '.epub' | '.pdf'
+): { valid: boolean; reason?: string } {
+  if (buffer.byteLength < 8) {
+    return { valid: false, reason: 'File is too small to be a valid eBook or PDF.' };
+  }
+
+  if (expectedFormat === '.pdf') {
+    // PDF specification allows %PDF- header within the first 1024 bytes
+    const headerWindow = buffer.subarray(0, Math.min(1024, buffer.byteLength)).toString('latin1');
+    if (!headerWindow.includes('%PDF-')) {
+      return {
+        valid: false,
+        reason: 'Invalid PDF file: missing %PDF header (file may be renamed or corrupted).',
+      };
+    }
+    return { valid: true };
+  }
+
+  // EPUB / KePub must start with ZIP local file header signature PK\x03\x04
+  if (
+    buffer[0] !== 0x50 ||
+    buffer[1] !== 0x4b ||
+    buffer[2] !== 0x03 ||
+    buffer[3] !== 0x04
+  ) {
+    return {
+      valid: false,
+      reason: 'Invalid EPUB file: not a valid ZIP container (file may be renamed or corrupted).',
+    };
+  }
+
+  // Verify EPUB structure without decompressing oversized zip bombs
+  let fileCount = 0;
+  let totalUncompressedBytes = 0;
+  const maxUncompressedBytes = 250 * 1024 * 1024; // 250 MB uncompressed cap
+  let hasEpubMarker = false;
+
+  try {
+    const entries = unzipSync(new Uint8Array(buffer), {
+      filter(file) {
+        fileCount++;
+        if (fileCount > 4000) {
+          throw new Error('Archive contains too many files (>4000) to be a safe EPUB.');
+        }
+        totalUncompressedBytes += file.originalSize;
+        if (totalUncompressedBytes > maxUncompressedBytes) {
+          throw new Error('Uncompressed EPUB size exceeds safety limit (possible zip bomb).');
+        }
+        const lowerName = file.name.toLowerCase();
+        if (
+          lowerName === 'mimetype' ||
+          lowerName === 'meta-inf/container.xml' ||
+          lowerName.endsWith('.opf')
+        ) {
+          hasEpubMarker = true;
+        }
+        // We only need to inspect markers, no need to decompress every chapter on the server
+        return false;
+      },
+    });
+    void entries;
+  } catch (err: any) {
+    return {
+      valid: false,
+      reason: err?.message || 'Corrupted or unsafe EPUB archive.',
+    };
+  }
+
+  if (!hasEpubMarker) {
+    return {
+      valid: false,
+      reason: 'Invalid EPUB archive: missing META-INF/container.xml or OPF package metadata.',
+    };
+  }
+
+  return { valid: true };
+}
+

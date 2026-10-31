@@ -1,6 +1,7 @@
 import { inspectAndConvertEpub } from './kepubify.ts';
 
 const CROCKFORD_ALPHABET = '23456789ABCDEFGHJKMNPQRSTVWXYZ';
+const MAX_CLIENT_FILE_BYTES = 100 * 1024 * 1024; // 100 MB
 
 interface LocalQueueItem {
   localId: string;
@@ -285,6 +286,34 @@ interface RemoteSessionStatus {
         continue;
       }
 
+      if (file.size === 0) {
+        queue.unshift({
+          localId: crypto.randomUUID(),
+          kind: 'file',
+          displayName: file.name,
+          sizeBytes: 0,
+          formatLabel: 'Empty',
+          status: 'error',
+          errorMessage: 'File is empty (0 bytes)',
+        });
+        added++;
+        continue;
+      }
+
+      if (file.size > MAX_CLIENT_FILE_BYTES) {
+        queue.unshift({
+          localId: crypto.randomUUID(),
+          kind: 'file',
+          displayName: file.name,
+          sizeBytes: file.size,
+          formatLabel: 'Too Large',
+          status: 'error',
+          errorMessage: 'File exceeds the 100 MB maximum size limit',
+        });
+        added++;
+        continue;
+      }
+
       const isPdf = lower.endsWith('.pdf');
       queue.unshift({
         localId: crypto.randomUUID(),
@@ -373,6 +402,12 @@ interface RemoteSessionStatus {
         item.sizeBytes = payloadBytes.byteLength;
         item.formatLabel = format === '.kepub.epub' ? 'KePub' : 'EPUB';
       } else {
+        // Verify %PDF- signature on the first 1024 bytes before reading entire file into RAM
+        const headSlice = new Uint8Array(await file.slice(0, 1024).arrayBuffer());
+        const headText = new TextDecoder('latin1').decode(headSlice);
+        if (!headText.includes('%PDF-')) {
+          throw new Error('Invalid PDF file (missing %PDF signature; file may be renamed)');
+        }
         payloadBytes = new Uint8Array(await file.arrayBuffer());
         format = '.pdf';
         item.formatLabel = 'PDF';
