@@ -114,7 +114,8 @@ export function createLeafServer(customConfig?: Partial<AppConfig>) {
 
   const server = http.createServer(async (req: IncomingMessage, res: ServerResponse) => {
     try {
-      const method = req.method || 'GET';
+      const rawMethod = req.method || 'GET';
+      const method = rawMethod === 'HEAD' ? 'GET' : rawMethod;
       const hostHeader = req.headers.host || 'localhost';
       const url = new URL(req.url || '/', `http://${hostHeader}`);
       const pathname = url.pathname;
