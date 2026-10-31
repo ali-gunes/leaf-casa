@@ -634,7 +634,7 @@ function renderSenderPage(config: AppConfig, prefillKey: string): string {
         <div class="section-header">
           <span class="step-label" id="step-pair-heading">Step 1 · Pair with E-Reader</span>
           <label class="kepub-toggle-label" for="kepub-toggle" title="Converts standard EPUBs into Kobo KePub format right inside your browser">
-            <input type="checkbox" id="kepub-toggle" checked>
+            <input type="checkbox" id="kepub-toggle">
             <span>Convert EPUB → KePub (<code>.kepub.epub</code>)</span>
           </label>
         </div>
