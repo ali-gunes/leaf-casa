@@ -212,11 +212,11 @@ export class SessionStore {
       }
     }
 
-    // Prevent a single IP from exhausting active sessions; evict oldest empty session from same IP
+    // Prevent a single IP from exhausting active sessions; evict oldest empty session from same IP first
     if (params.receiverIp) {
       const ipSessions = Array.from(this.sessions.values())
         .filter((s) => s.receiverIp === params.receiverIp)
-        .sort((a, b) => a.createdAt - b.createdAt);
+        .sort((a, b) => a.files.length - b.files.length || a.createdAt - b.createdAt);
       while (ipSessions.length >= MAX_SESSIONS_PER_IP) {
         const oldest = ipSessions.shift();
         if (oldest) this.deleteSession(oldest.key);
