@@ -1,6 +1,6 @@
-# <img src="src/client/assets/logo.png" width="28" height="28" align="top" alt="Leaf logo" /> Leaf (`leaf.casa`)
+# <img src="src/client/assets/logo.png" width="28" height="28" align="top" alt="Leaf Casa logo" /> Leaf Casa (`leaf.casa`)
 
-Leaf is a fast, zero-account web relay for sending eBooks (`.epub`, `.pdf`) and web articles directly to e-readers (Kobo, Kindle, PocketBook, Tolino) over their built-in web browsers.
+Leaf Casa is a fast, zero-account web relay for sending eBooks (`.epub`, `.pdf`) and web articles directly to e-readers (Kobo, Kindle, PocketBook, Tolino) over their built-in web browsers.
 
 ## Features
 
@@ -78,7 +78,7 @@ npm test
 
 ## Analytics & Privacy
 
-Leaf includes a lightweight, self-hosted `/stats` dashboard backed by Node's built-in SQLite module (`data/stats.db`). Because running an open, unauthenticated file relay and URL fetcher on the public internet requires visibility into bandwidth and abuse, Leaf records basic operational metrics without crossing into user surveillance.
+Leaf Casa includes a lightweight, self-hosted `/stats` dashboard backed by Node's built-in SQLite module (`data/stats.db`). Because running an open, unauthenticated file relay and URL fetcher on the public internet requires visibility into bandwidth and abuse, Leaf Casa records basic operational metrics without crossing into user surveillance.
 
 ### What We Never Collect
 
@@ -95,8 +95,8 @@ When a page loads or a file transfer occurs, the server writes a row to the loca
 2. **Transfer format (`.kepub.epub`, `.epub`, `.pdf`, `article`), size in bytes, and download status**
    - *Why*: Helps monitor RAM pool pressure, total bandwidth relayed, and whether files queued from phones/computers are successfully completing their download on e-readers.
 3. **Country code and IP address (configurable via `LOG_RAW_IP`)**
-   - *Why*: Because Leaf requires no account login, IP and country visibility allow the server operator to spot automated scraping, SSRF abuse on the article converter, or bandwidth flooding.
-   - *Privacy toggle*: If you self-host Leaf and do not want raw IP addresses stored on disk, set `LOG_RAW_IP=false` in your `.env`. Leaf will immediately replace raw IPs with a truncated one-way SHA-256 hash (`anon-xxxxxxxxxx`) before writing to SQLite, preserving unique visitor counts without storing network addresses.
+   - *Why*: Because Leaf Casa requires no account login, IP and country visibility allow the server operator to spot automated scraping, SSRF abuse on the article converter, or bandwidth flooding.
+   - *Privacy toggle*: If you self-host Leaf Casa and do not want raw IP addresses stored on disk, set `LOG_RAW_IP=false` in your `.env`. Leaf Casa will immediately replace raw IPs with a truncated one-way SHA-256 hash (`anon-xxxxxxxxxx`) before writing to SQLite, preserving unique visitor counts without storing network addresses.
 
 ## Configuration
 
