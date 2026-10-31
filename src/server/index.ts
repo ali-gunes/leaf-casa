@@ -107,8 +107,9 @@ export function createLeafServer(customConfig?: Partial<AppConfig>) {
     const sepIndex = decoded.indexOf(':');
     if (sepIndex === -1) return false;
 
+    const user = decoded.slice(0, sepIndex);
     const pass = decoded.slice(sepIndex + 1);
-    return pass === config.statsPassword;
+    return user === config.statsUser && pass === config.statsPassword;
   }
 
   const server = http.createServer(async (req: IncomingMessage, res: ServerResponse) => {

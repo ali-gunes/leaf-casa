@@ -31,7 +31,7 @@ services:
     container_name: leaf-casa
     restart: unless-stopped
     ports:
-      - "3000:3000"
+      - "127.0.0.1:9522:3000"
     environment:
       - PUBLIC_APP_NAME=Leaf Casa
       - PUBLIC_BASE_URL=https://leaf.casa

@@ -4,12 +4,14 @@ services:
     container_name: leaf-casa
     restart: unless-stopped
     ports:
-      - "3000:3000"
+      - "127.0.0.1:${HOST_PORT:-9522}:3000"
     environment:
       - PUBLIC_APP_NAME=${PUBLIC_APP_NAME:-Leaf}
       - PUBLIC_BASE_URL=${PUBLIC_BASE_URL:-https://leaf.casa}
+      - PUBLIC_GITHUB_URL=${PUBLIC_GITHUB_URL:-https://github.com/ali-gunes/leaf-casa}
       - PORT=3000
       - DB_PATH=/data/stats.db
+      - STATS_USER=${STATS_USER:-admin}
       - STATS_PASSWORD=${STATS_PASSWORD:-}
       - LOG_RAW_IP=${LOG_RAW_IP:-true}
     volumes:
