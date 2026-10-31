@@ -577,7 +577,7 @@ function renderReceiverPage(config: AppConfig, session: Session, qrSvg: string):
   </main>
 
   <footer class="eink-footer">
-    Pure 1-Bit E-Ink Mode &middot; Files are held only in memory and cleared automatically after 15 minutes &middot; <a href="${escapeHtml(config.githubUrl)}" target="_blank" rel="noopener noreferrer">GitHub Source</a>
+    Pure 1-Bit E-Ink Mode &middot; Files are held only in memory and cleared automatically after 15 minutes &middot; <a href="${escapeHtml(config.githubUrl)}" target="_blank" rel="noopener noreferrer">Source</a>
   </footer>
 
   <script>
