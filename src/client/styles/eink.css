@@ -1,0 +1,277 @@
+/* Pure 1-Bit E-Ink Stylesheet — Zero grays, zero shadows, zero animations */
+* {
+  box-sizing: border-box;
+  margin: 0;
+  padding: 0;
+  transition: none !important;
+  animation: none !important;
+  box-shadow: none !important;
+  text-shadow: none !important;
+}
+
+html,
+body {
+  background-color: #ffffff;
+  color: #000000;
+  font-family: Georgia, "Times New Roman", serif;
+  font-size: 18px;
+  line-height: 1.45;
+  padding: 16px;
+  max-width: 820px;
+  margin: 0 auto;
+}
+
+a {
+  color: #000000;
+  text-decoration: underline;
+}
+
+.eink-header {
+  display: table;
+  width: 100%;
+  border-bottom: 3px solid #000000;
+  padding-bottom: 12px;
+  margin-bottom: 18px;
+}
+
+.eink-brand {
+  display: table-cell;
+  vertical-align: middle;
+}
+
+.eink-brand-title {
+  font-size: 28px;
+  font-weight: bold;
+  letter-spacing: 0.02em;
+}
+
+.eink-brand-domain {
+  font-family: "Courier New", Courier, monospace;
+  font-size: 16px;
+  font-weight: bold;
+  margin-left: 8px;
+}
+
+.eink-nav {
+  display: table-cell;
+  vertical-align: middle;
+  text-align: right;
+}
+
+.eink-switch-link {
+  display: inline-block;
+  border: 2px solid #000000;
+  padding: 8px 12px;
+  font-family: Arial, Helvetica, sans-serif;
+  font-size: 15px;
+  font-weight: bold;
+  text-decoration: none;
+  background-color: #ffffff;
+  color: #000000;
+}
+
+.eink-pairing-box {
+  display: table;
+  width: 100%;
+  border: 3px solid #000000;
+  padding: 18px;
+  margin-bottom: 20px;
+}
+
+.eink-code-col {
+  display: table-cell;
+  vertical-align: middle;
+  width: 65%;
+  padding-right: 14px;
+}
+
+.eink-qr-col {
+  display: table-cell;
+  vertical-align: middle;
+  text-align: right;
+  width: 35%;
+}
+
+.eink-label {
+  font-family: Arial, Helvetica, sans-serif;
+  font-size: 15px;
+  font-weight: bold;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  margin-bottom: 8px;
+}
+
+.eink-code-display {
+  font-family: "Courier New", Courier, monospace;
+  font-size: 52px;
+  font-weight: bold;
+  letter-spacing: 0.22em;
+  line-height: 1.1;
+  margin: 8px 0 12px 0;
+  word-break: keep-all;
+}
+
+.eink-hint {
+  font-size: 16px;
+  margin-top: 6px;
+}
+
+.eink-qr-wrap {
+  display: inline-block;
+  border: 2px solid #000000;
+  padding: 6px;
+  background-color: #ffffff;
+}
+
+.eink-qr-wrap svg {
+  display: block;
+  width: 136px;
+  height: 136px;
+}
+
+.eink-primary-btn {
+  display: block;
+  width: 100%;
+  min-height: 62px;
+  padding: 14px 18px;
+  border: 3px solid #000000;
+  background-color: #000000;
+  color: #ffffff;
+  font-family: Arial, Helvetica, sans-serif;
+  font-size: 21px;
+  font-weight: bold;
+  text-align: center;
+  text-decoration: none;
+  cursor: pointer;
+  margin-bottom: 20px;
+}
+
+.eink-secondary-btn {
+  display: inline-block;
+  min-height: 56px;
+  line-height: 30px;
+  padding: 10px 16px;
+  border: 2px solid #000000;
+  background-color: #ffffff;
+  color: #000000;
+  font-family: Arial, Helvetica, sans-serif;
+  font-size: 17px;
+  font-weight: bold;
+  text-decoration: none;
+  cursor: pointer;
+  margin-right: 10px;
+  margin-top: 8px;
+}
+
+.eink-section-title {
+  font-family: Arial, Helvetica, sans-serif;
+  font-size: 18px;
+  font-weight: bold;
+  text-transform: uppercase;
+  border-bottom: 2px solid #000000;
+  padding-bottom: 6px;
+  margin-bottom: 12px;
+}
+
+.eink-empty-box {
+  border: 2px dashed #000000;
+  padding: 20px;
+  text-align: center;
+  font-size: 18px;
+  margin-bottom: 20px;
+}
+
+.eink-queue-list {
+  list-style: none;
+  margin-bottom: 20px;
+}
+
+.eink-queue-item {
+  border: 2px solid #000000;
+  padding: 14px;
+  margin-bottom: 12px;
+  display: table;
+  width: 100%;
+}
+
+.eink-queue-info {
+  display: table-cell;
+  vertical-align: middle;
+  padding-right: 12px;
+}
+
+.eink-queue-title {
+  font-size: 20px;
+  font-weight: bold;
+  word-break: break-word;
+}
+
+.eink-queue-meta {
+  font-family: Arial, Helvetica, sans-serif;
+  font-size: 15px;
+  margin-top: 4px;
+}
+
+.eink-queue-action {
+  display: table-cell;
+  vertical-align: middle;
+  text-align: right;
+  white-space: nowrap;
+}
+
+.eink-download-link {
+  display: inline-block;
+  min-height: 56px;
+  line-height: 32px;
+  padding: 10px 18px;
+  border: 2px solid #000000;
+  background-color: #ffffff;
+  color: #000000;
+  font-family: Arial, Helvetica, sans-serif;
+  font-size: 18px;
+  font-weight: bold;
+  text-decoration: none;
+}
+
+.eink-badge-done {
+  display: inline-block;
+  padding: 4px 8px;
+  border: 2px solid #000000;
+  font-family: "Courier New", Courier, monospace;
+  font-size: 14px;
+  font-weight: bold;
+  margin-right: 8px;
+}
+
+.eink-footer {
+  border-top: 2px solid #000000;
+  padding-top: 12px;
+  margin-top: 16px;
+  font-family: Arial, Helvetica, sans-serif;
+  font-size: 15px;
+}
+
+@media screen and (max-width: 540px) {
+  .eink-pairing-box,
+  .eink-code-col,
+  .eink-qr-col,
+  .eink-queue-item,
+  .eink-queue-info,
+  .eink-queue-action {
+    display: block;
+    width: 100%;
+    text-align: left;
+  }
+
+  .eink-qr-col {
+    margin-top: 14px;
+  }
+
+  .eink-queue-action {
+    margin-top: 10px;
+  }
+
+  .eink-code-display {
+    font-size: 44px;
+  }
+}

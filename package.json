@@ -1,0 +1,31 @@
+{
+  "name": "leaf-casa",
+  "version": "1.0.0",
+  "description": "Fast, zero-account eBook and article relay for e-readers",
+  "license": "MIT",
+  "type": "module",
+  "scripts": {
+    "build:client": "esbuild src/client/sender/main.ts --bundle --minify --sourcemap --target=es2020 --outfile=dist/client/sender.js",
+    "build:server": "esbuild src/server/index.ts --bundle --platform=node --target=node22 --format=esm --packages=external --outfile=dist/server/index.js",
+    "build": "npm run build:client && npm run build:server",
+    "dev": "npm run build:client && node --watch src/server/index.ts",
+    "start": "node dist/server/index.js",
+    "test": "node --test test/*.test.ts"
+  },
+  "dependencies": {
+    "@mozilla/readability": "^0.6.0",
+    "fflate": "^0.8.2",
+    "geoip-lite": "^1.4.10",
+    "linkedom": "^0.18.9",
+    "qrcode": "^1.5.4"
+  },
+  "devDependencies": {
+    "@types/node": "^22.13.0",
+    "@types/qrcode": "^1.5.5",
+    "esbuild": "^0.25.0",
+    "typescript": "^5.7.3"
+  },
+  "engines": {
+    "node": ">=22.5.0"
+  }
+}

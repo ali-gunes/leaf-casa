@@ -1,0 +1,31 @@
+# Dependencies
+node_modules/
+
+# Build output
+dist/
+
+# Runtime data & SQLite WAL files
+data/*.db
+data/*.db-shm
+data/*.db-wal
+
+# Environment configuration
+.env
+.env.local
+.env.*.local
+
+# Logs & diagnostics
+logs/
+*.log
+npm-debug.log*
+
+# OS & editor files
+.DS_Store
+Thumbs.db
+.idea/
+.vscode/
+*.swp
+*.swo
+
+# Local planning notes
+implementation_plan.md

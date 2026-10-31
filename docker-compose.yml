@@ -1,0 +1,16 @@
+services:
+  leaf:
+    build: .
+    container_name: leaf-casa
+    restart: unless-stopped
+    ports:
+      - "3000:3000"
+    environment:
+      - PUBLIC_APP_NAME=${PUBLIC_APP_NAME:-Leaf}
+      - PUBLIC_BASE_URL=${PUBLIC_BASE_URL:-https://leaf.casa}
+      - PORT=3000
+      - DB_PATH=/data/stats.db
+      - STATS_PASSWORD=${STATS_PASSWORD:-}
+      - LOG_RAW_IP=${LOG_RAW_IP:-true}
+    volumes:
+      - ./data:/data
