@@ -13,7 +13,7 @@ import {
 } from '../src/server/sessionStore.ts';
 import { inspectAndConvertEpub } from '../src/client/sender/kepubify.ts';
 import { fetchAndBuildArticleEpub, validatePublicUrl } from '../src/server/articleToEpub.ts';
-import { lookupGeoCountry } from '../src/server/analytics.ts';
+import { lookupGeoCountry, isLikelyBotUserAgent } from '../src/server/analytics.ts';
 import { convertEpubBufferToMobi } from '../src/server/epubToMobi.ts';
 import { createLeafServer } from '../src/server/index.ts';
 
@@ -324,10 +324,19 @@ test('End-to-end HTTP relay, queue download tracking, and SQLite /stats auth', a
     assert.throws(() => validatePublicUrl('http://172.18.0.5:3000/'), /Private or local/);
     assert.throws(() => validatePublicUrl('https://user:pass@example.com/article'), /embedded credentials/);
 
-    // 12. GeoIP lookup resolves public IPs properly via createRequire
+    // 12. GeoIP lookup & bot User-Agent detection
     assert.equal(lookupGeoCountry('176.234.114.13'), 'TR');
     assert.equal(lookupGeoCountry('152.228.236.215'), 'FR');
     assert.equal(lookupGeoCountry('127.0.0.1'), 'LOCAL');
+    assert.equal(isLikelyBotUserAgent('Mozilla/5.0 (compatible; CensysInspect/1.1; +https://about.censys.io/)'), true);
+    assert.equal(isLikelyBotUserAgent('WhatsApp/2.23.20.0'), true);
+    assert.equal(isLikelyBotUserAgent('Mozilla/5.0 (Linux; U; Android 2.0; en-us;) Kobo Touch'), false);
+    assert.equal(
+      isLikelyBotUserAgent(
+        'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36'
+      ),
+      false
+    );
 
     // 13. Kindle session auto-converts EPUB -> MOBI and blocks unsupported PDF downloads
     const kindleGen = await request('/api/generate', {

@@ -932,7 +932,7 @@ function renderStatsDashboard(
       <div class="kpi-card">
         <div class="kpi-label">Total Visits</div>
         <div class="kpi-value">${stats.totals.visits.toLocaleString()}</div>
-        <div class="kpi-sub">${stats.totals.senderVisits} senders · ${stats.totals.receiverVisits} e-readers</div>
+        <div class="kpi-sub">${stats.totals.senderVisits} senders · ${stats.totals.receiverVisits} e-readers · ${stats.totals.botVisits} likely bots</div>
       </div>
       <div class="kpi-card">
         <div class="kpi-label">Unique IPs</div>
@@ -980,11 +980,15 @@ function renderStatsDashboard(
       : stats.countries
         .map((c) => {
           const pct = Math.max(4, Math.round((c.visits / maxCountryVisits) * 100));
+          const botNote =
+            c.botVisits > 0
+              ? ` (${c.botVisits} likely ${c.botVisits === 1 ? 'bot' : 'bots'})`
+              : '';
           return `
                   <div class="bar-row">
                     <div class="bar-row-top">
                       <span>${c.flag} <strong>${escapeHtml(c.country)}</strong></span>
-                      <span>${c.visits} visits · ${c.transfers} books</span>
+                      <span>${c.visits} visits${botNote} · ${c.transfers} books</span>
                     </div>
                     <div class="bar-track"><div class="bar-fill" style="width: ${pct}%;"></div></div>
                   </div>
@@ -1085,11 +1089,11 @@ function renderStatsDashboard(
       : stats.recentVisits
         .map(
           (v) => `
-                      <tr>
+                      <tr title="${escapeHtml(v.userAgent || 'No User-Agent')}">
                         <th>#${v.id}</th>
                         <td>${escapeHtml(v.createdAt)}</td>
                         <td>${countryToFlag(v.country)} ${escapeHtml(v.country)} (${escapeHtml(v.ip)})</td>
-                        <td>${escapeHtml(v.role)}</td>
+                        <td>${escapeHtml(v.role)}${v.isBot ? ' · likely bot' : ''}</td>
                         <td>${escapeHtml(v.deviceType)}</td>
                       </tr>
                     `

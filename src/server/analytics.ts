@@ -85,9 +85,51 @@ export function countryToFlag(countryCode: string): string {
   return String.fromCodePoint(0x1f1e6 + (first - 65), 0x1f1e6 + (second - 65));
 }
 
+const BOT_UA_PATTERN =
+  /bot|crawl|spider|slurp|censys|shodan|palo.?alto|expanse|zgrab|masscan|nmap|curl|wget|python|aiohttp|httpx|go-http-client|http-client|axios|node-fetch|undici|java\/|okhttp|apache-httpclient|libwww|scrapy|headless|phantomjs|playwright|puppeteer|lighthouse|pagespeed|gtmetrix|pingdom|uptimerobot|statuscake|datadog|netcraft|leakix|internetmeasurement|criminalip|stretchoid|binaryedge|onyphe|whatsapp|telegram|discord|slack|twitter|facebookexternalhit|facebot|linkedin|pinterest|skype|embedly|iframely|preview|scanner|inspect/i;
+
+const EREADER_UA_PATTERN =
+  /kobo|nickel|kindle|silk\/|kfapw|kftt|kfjwi|pocketbook|tolino|nook|ebook|ereader|e-ink|boox|remarkable|cervantes|netfront/i;
+
+/**
+ * Heuristic detector for automated scanners, CT-log crawlers, and link-preview bots.
+ * E-reader User-Agents are explicitly whitelisted so older embedded browsers are never flagged.
+ */
+export function isLikelyBotUserAgent(userAgentRaw: string | undefined | null): boolean {
+  const ua = (userAgentRaw || '').trim();
+  if (!ua || ua.length < 20) return true;
+
+  if (EREADER_UA_PATTERN.test(ua)) return false;
+  if (ua.toLowerCase().includes('linux; u;') && ua.toLowerCase().includes('en-us;') && !ua.toLowerCase().includes('android')) {
+    return false;
+  }
+
+  if (BOT_UA_PATTERN.test(ua)) return true;
+
+  // Bare Mozilla/5.0 or old Windows XP/Vista/7 strings heavily used by automated scanners
+  if (/^Mozilla\/[45]\.0$/i.test(ua)) return true;
+  if (/Windows NT (5\.|6\.[01])/i.test(ua)) return true;
+
+  // Outdated Chrome (< 115) or Firefox (< 100) versions commonly spoofed by CT-log scanners
+  const chromeMatch = ua.match(/Chrome\/(\d+)\./);
+  if (chromeMatch) {
+    const major = Number(chromeMatch[1]);
+    if (major > 0 && major < 115) return true;
+  }
+
+  const ffMatch = ua.match(/Firefox\/(\d+)\./);
+  if (ffMatch) {
+    const major = Number(ffMatch[1]);
+    if (major > 0 && major < 100) return true;
+  }
+
+  return false;
+}
+
 export interface StatsSnapshot {
   totals: {
     visits: number;
+    botVisits: number;
     uniqueIps: number;
     senderVisits: number;
     receiverVisits: number;
@@ -95,7 +137,7 @@ export interface StatsSnapshot {
     transfersDownloaded: number;
     bytesRelayed: number;
   };
-  countries: Array<{ country: string; flag: string; visits: number; transfers: number }>;
+  countries: Array<{ country: string; flag: string; visits: number; botVisits: number; transfers: number }>;
   devices: Array<{ deviceType: string; count: number }>;
   formats: Array<{ format: string; count: number; bytes: number }>;
   daily: Array<{ day: string; visits: number; transfers: number }>;
@@ -119,6 +161,8 @@ export interface StatsSnapshot {
     country: string;
     role: string;
     deviceType: string;
+    isBot: boolean;
+    userAgent: string;
   }>;
 }
 
@@ -145,7 +189,8 @@ export class AnalyticsStore {
         country TEXT NOT NULL,
         role TEXT NOT NULL,
         device_type TEXT NOT NULL,
-        user_agent TEXT
+        user_agent TEXT,
+        is_bot INTEGER NOT NULL DEFAULT 0
       );
 
       CREATE INDEX IF NOT EXISTS idx_visits_created_at ON visits(created_at);
@@ -169,6 +214,12 @@ export class AnalyticsStore {
       CREATE INDEX IF NOT EXISTS idx_transfers_created_at ON transfers(created_at);
     `);
 
+    try {
+      this.db.exec(`ALTER TABLE visits ADD COLUMN is_bot INTEGER NOT NULL DEFAULT 0`);
+    } catch {
+      // Column already exists
+    }
+
     this.backfillUnknownCountries();
   }
 
@@ -184,6 +235,21 @@ export class AnalyticsStore {
           const resolved = lookupGeoCountry(row.ip);
           if (resolved && resolved !== 'XX') {
             updateVisit.run(resolved, row.ip);
+          }
+        }
+      }
+
+      // Backfill bot flags across historical visits using stored user_agent
+      const allVisits = this.db
+        .prepare(`SELECT id, user_agent, is_bot FROM visits`)
+        .all() as Array<{ id: number; user_agent: string | null; is_bot: number }>;
+
+      if (allVisits.length > 0) {
+        const updateBot = this.db.prepare(`UPDATE visits SET is_bot = ? WHERE id = ?`);
+        for (const v of allVisits) {
+          const detected = isLikelyBotUserAgent(v.user_agent) ? 1 : 0;
+          if (detected !== Number(v.is_bot || 0)) {
+            updateBot.run(detected, v.id);
           }
         }
       }
@@ -230,16 +296,18 @@ export class AnalyticsStore {
   }): void {
     setImmediate(() => {
       try {
+        const isBot = isLikelyBotUserAgent(params.userAgent) ? 1 : 0;
         const stmt = this.db.prepare(`
-          INSERT INTO visits (ip, country, role, device_type, user_agent)
-          VALUES (?, ?, ?, ?, ?)
+          INSERT INTO visits (ip, country, role, device_type, user_agent, is_bot)
+          VALUES (?, ?, ?, ?, ?, ?)
         `);
         stmt.run(
           params.ip,
           params.country || 'XX',
           params.role,
           params.deviceType,
-          (params.userAgent || '').slice(0, 280)
+          (params.userAgent || '').slice(0, 280),
+          isBot
         );
       } catch {
         // Non-blocking analytics failure
@@ -302,6 +370,7 @@ export class AnalyticsStore {
       .prepare(
         `SELECT
           COUNT(*) AS total,
+          COALESCE(SUM(CASE WHEN is_bot = 1 THEN 1 ELSE 0 END), 0) AS bot_visits,
           COUNT(DISTINCT ip) AS unique_ips,
           SUM(CASE WHEN role = 'sender' THEN 1 ELSE 0 END) AS sender_visits,
           SUM(CASE WHEN role = 'receiver' THEN 1 ELSE 0 END) AS receiver_visits
@@ -324,6 +393,7 @@ export class AnalyticsStore {
         `SELECT
           c.country AS country,
           COALESCE(v.visit_count, 0) AS visits,
+          COALESCE(v.bot_count, 0) AS bot_visits,
           COALESCE(t.transfer_count, 0) AS transfers
         FROM (
           SELECT country FROM visits
@@ -333,7 +403,12 @@ export class AnalyticsStore {
           SELECT receiver_country AS country FROM transfers
         ) c
         LEFT JOIN (
-          SELECT country, COUNT(*) AS visit_count FROM visits GROUP BY country
+          SELECT
+            country,
+            COUNT(*) AS visit_count,
+            SUM(CASE WHEN is_bot = 1 THEN 1 ELSE 0 END) AS bot_count
+          FROM visits
+          GROUP BY country
         ) v ON v.country = c.country
         LEFT JOIN (
           SELECT receiver_country AS country, COUNT(*) AS transfer_count FROM transfers GROUP BY receiver_country
@@ -341,7 +416,7 @@ export class AnalyticsStore {
         ORDER BY visits DESC, transfers DESC
         LIMIT 12`
       )
-      .all() as Array<{ country: string; visits: number; transfers: number }>;
+      .all() as Array<{ country: string; visits: number; bot_visits: number; transfers: number }>;
 
     const deviceRows = this.db
       .prepare(
@@ -410,7 +485,7 @@ export class AnalyticsStore {
 
     const recentVisitRows = this.db
       .prepare(
-        `SELECT id, created_at, ip, country, role, device_type
+        `SELECT id, created_at, ip, country, role, device_type, is_bot, COALESCE(user_agent, '') AS user_agent
          FROM visits
          ORDER BY id DESC
          LIMIT 25`
@@ -420,6 +495,7 @@ export class AnalyticsStore {
     return {
       totals: {
         visits: Number(visitRow?.total || 0),
+        botVisits: Number(visitRow?.bot_visits || 0),
         uniqueIps: Number(visitRow?.unique_ips || 0),
         senderVisits: Number(visitRow?.sender_visits || 0),
         receiverVisits: Number(visitRow?.receiver_visits || 0),
@@ -431,6 +507,7 @@ export class AnalyticsStore {
         country: c.country,
         flag: countryToFlag(c.country),
         visits: Number(c.visits),
+        botVisits: Number(c.bot_visits || 0),
         transfers: Number(c.transfers),
       })),
       devices: deviceRows.map((d) => ({
@@ -467,6 +544,8 @@ export class AnalyticsStore {
         country: String(r.country),
         role: String(r.role),
         deviceType: String(r.device_type),
+        isBot: Number(r.is_bot) === 1,
+        userAgent: String(r.user_agent || ''),
       })),
     };
   }
